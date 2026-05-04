@@ -310,7 +310,7 @@ test("Content-Type header via middleware", async t => {
   await server.close();
 });
 
-test("Content-Range request", async (t) => {
+test.only("Content-Range request", async (t) => {
   let server = new EleventyDevServer(
     "test-server",
     "./test/stubs/",

@@ -10,7 +10,7 @@ import finalhandler from "finalhandler";
 import WebSocket, { WebSocketServer } from "ws";
 import mime from "mime";
 import ssri from "ssri";
-import send from "send";
+import parseRange from "range-parser";
 import chokidar from "chokidar";
 import { TemplatePath, isPlainObject } from "@11ty/eleventy-utils";
 import debugUtil from "debug";
@@ -638,7 +638,20 @@ export default class EleventyDevServer {
     next();
   }
 
-  // This runs at the end of the middleware chain
+  /**
+   * @param {String} type
+   * @param {number} size
+   * @param {number=} range
+   */
+  #contentRange(type, size, range) {
+    return type + ' ' + (range ? range.start + '-' + range.end : '*') + '/' + size
+  }
+
+  /**
+   * @param {import('node:http').IncomingMessage} req
+   * @param {import('node:http').OutgoingMessage} res
+   * This runs at the end of the middleware chain
+   */
   eleventyProjectMiddleware(req, res) {
     // Known issue with `finalhandler` and HTTP/2:
     // UnsupportedWarning: Status message is not supported by HTTP/2 (RFC7540 8.1.2.4)
@@ -668,11 +681,61 @@ export default class EleventyDevServer {
       if (match) {
         if (match.statusCode === 200 && match.filepath) {
           // Content-Range request, probably Safari trying to stream video
-          if (req.headers.range)  {
-            return send(req, match.filepath).pipe(res);
-          }
+          // If the client includes an If-Range header,
+          // serve them the whole thing. We don't include
+          // last-modified or etags headers, so these
+          // requests are invalid.
+          if (req.headers.range && !req.headers['if-range'])  {
+            fs.stat(match.filepath, (err, stat) => {
+              if (err) {
+                res.statusCode = 404;
+                res.send('File not found');
+                return;
+              }
 
-          return this.renderFile(match.filepath, res);
+              const len = stat.size;
+
+              const ranges = parseRange(len, req.headers.range, {
+                combine: true
+              })
+
+              // unsatisfiable
+              if (ranges === -1) {
+                // 416 Requested Range Not Satisfiable
+                res.statusCode = 416;
+                res.setHeader('Content-Range', this.#contentRange('bytes', len))
+                return res.end();
+              }
+
+              // valid (syntactically invalid/multiple ranges are treated as a regular response)
+              if (ranges !== -2 && ranges.length === 1) {
+                // Content-Range
+                res.statusCode = 206
+                res.setHeader('Content-Range', this.#contentRange('bytes', len, ranges[0]))
+
+                // adjust for requested range
+                let start = ranges[0].start
+                len = ranges[0].end - ranges[0].start + 1
+                let end = Math.max(offset, offset + len - 1)
+                res.setHeader('Content-Length', len)
+                if (req.method === 'HEAD') {
+                  res.end()
+                  return
+                }
+                const stream = fs.createReadStream(match.filepath, {
+                  start, end
+                });
+                stream.pipe(res);
+                const cleanup = () => {
+                  stream.destroy();
+                }
+                stream.on('error', cleanup);
+                stream.on('end', cleanup);
+              }
+            })
+          } else {
+            return this.renderFile(match.filepath, res);
+          }
         }
 
         // Redirects, usually for trailing slash to .html stuff
