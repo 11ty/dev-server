@@ -53,14 +53,17 @@ class Util {
       return false;
     }
 
-    let oldWithoutHref = from.cloneNode();
-    let newWithoutHref = to.cloneNode();
+    let fromClone = from.cloneNode();
+    let toClone = to.cloneNode();
 
-    oldWithoutHref.removeAttribute("href");
-    newWithoutHref.removeAttribute("href");
+    fromClone.removeAttribute("href");
+    toClone.removeAttribute("href");
+
+    // Speed-up trick from morphdom docs
+    // https://dom.spec.whatwg.org/#concept-node-equals
 
     // if all other attributes besides href match
-    if(!oldWithoutHref.isEqualNode(newWithoutHref)) {
+    if(!fromClone.isEqualNode(toClone)) {
       return false;
     }
 
@@ -95,14 +98,51 @@ class Util {
     (target || source).replaceWith(script);
   }
 
-  static fullPageReload() {
-    Util.log(`Page reload initiated.`);
-    window.location.reload();
+  static fullPageReload(options = {}) {
+    let { via } = options;
+    Util.log(`Full page reload (via: ${via})`);
+    // window.location.reload();
+
+    if("navigation" in window) {
+      navigation.navigate(location.href);
+    } else {
+      location.href = location.href;
+    }
+  }
+
+  static highlightNode(el, color = '#00a776', duration = 600) {
+    el.animate(
+      [
+        { outline: `.15em solid var(--eleventy-reload-highlight, ${color})`, outlineOffset: "2px", offset: 0 },
+        { outline: ".15em solid transparent", outlineOffset: "2px", offset: 1 }
+      ],
+      { duration, easing: 'ease-out', fill: 'none' }
+    );
   }
 }
 
 class EleventyReload {
+  #socket;
+  #ack = [];
+  #ready = false; // swap to Promise.withResolvers
+
+  static RELOAD_ENABLED = true;
   static QUERY_PARAM = "_11ty";
+
+  static isCustomElement(node) {
+    return customElements.get(node.tagName.toLowerCase())
+  }
+
+  setReloadEnabled(enabled) {
+    EleventyReload.RELOAD_ENABLED = Boolean(enabled);
+  }
+
+  static reload(options = {}) {
+    if(!this.RELOAD_ENABLED) {
+      return;
+    }
+    Util.fullPageReload(options);
+  }
 
   static reloadTypes = {
     css: (files, build = {}) => {
@@ -120,7 +160,7 @@ class EleventyReload {
         }
 
         if(!match) {
-          Util.fullPageReload();
+          this.reload({ via: "css" });
           return;
         }
       }
@@ -141,8 +181,14 @@ class EleventyReload {
         return url === document.location.pathname && (files || []).includes(inputPath);
       });
 
+      // Not eligible for domDiff
       if(domdiffTemplates.length === 0) {
-        Util.fullPageReload();
+        this.reload({ via: "ineligible domdiff"});
+        return;
+      }
+
+      // Temporary
+      if(EleventyReload.RELOAD_ENABLED === false) {
         return;
       }
 
@@ -155,20 +201,30 @@ class EleventyReload {
           morphed = true;
 
           morphdom(document.documentElement, content, {
-            childrenOnly: true,
+            childrenOnly: false,
+            onBeforeNodeDiscarded: function(node) {
+              // Don’t discard stylesheets inserted via script! (e.g. Web Awesome)
+              // TODO maybe more defensive?
+              if((node?.tagName || "").toLowerCase() === "link") {
+                return false;
+              }
+            },
             onBeforeElUpdated: function (fromEl, toEl) {
-              if (fromEl.nodeName === "SCRIPT" && toEl.nodeName === "SCRIPT") {
-                if(toEl.innerHTML !== fromEl.innerHTML) {
-                  Util.log(`JavaScript modified, reload initiated.`);
-                  window.location.reload();
-                }
-
+              if(fromEl.hasAttribute("inert")) {
+                Util.highlightNode(fromEl);
                 return false;
               }
 
-              // Speed-up trick from morphdom docs
-              // https://dom.spec.whatwg.org/#concept-node-equals
-              if (fromEl.isEqualNode(toEl)) {
+              if(fromEl.matches(':is(input,textarea,select):focus')) {
+                Util.highlightNode(fromEl);
+                return false;
+              }
+
+              if (fromEl.nodeName === "SCRIPT" && toEl.nodeName === "SCRIPT") {
+                if(toEl.innerHTML !== fromEl.innerHTML) {
+                  EleventyReload.reload({ via: "<script> modified"});
+                }
+
                 return false;
               }
 
@@ -194,24 +250,15 @@ class EleventyReload {
               } else {
                 parent.appendChild(child);
               }
+
+              Util.highlightNode(child);
             },
             onNodeAdded: function (node) {
               if (node.nodeName === 'SCRIPT') {
-                Util.log(`JavaScript added, reload initiated.`);
-                window.location.reload();
+                EleventyReload.reload({ via: "<script> added"});
               }
             },
-            onElUpdated: function(node) {
-              // Re-attach custom elements
-              if(customElements.get(node.tagName.toLowerCase())) {
-                let placeholder = document.createElement("div");
-                node.replaceWith(placeholder);
-                requestAnimationFrame(() => {
-                  placeholder.replaceWith(node);
-                  placeholder = undefined;
-                });
-              }
-            }
+            // Removed an `onElUpdated` bit that reattached custom elements (to retrigger connectedCallback methods?)
           });
 
           Util.matchRootAttributes(content);
@@ -222,7 +269,7 @@ class EleventyReload {
       }
 
       if (!morphed) {
-        Util.fullPageReload();
+        this.reload({ via: "no domdiff content received" });
       }
     }
   }
@@ -232,9 +279,9 @@ class EleventyReload {
     this.reconnectEventCallback = this.reconnect.bind(this);
   }
 
-  init(options = {}) {
-    if (!("WebSocket" in window)) {
-      return;
+  get socket() {
+    if(this.#socket) {
+      return this.#socket;
     }
 
     let documentUrl = new URL(document.location.href);
@@ -249,9 +296,17 @@ class EleventyReload {
     // works with http (ws) and https (wss)
     let websocketProtocol = protocol.replace("http", "ws");
 
-    let socket = new WebSocket(`${websocketProtocol}//${host}`);
+    this.#socket = new WebSocket(`${websocketProtocol}//${host}`);
 
-    socket.addEventListener("message", async (event) => {
+    return this.#socket;
+  }
+
+  init(options = {}) {
+    if (!("WebSocket" in window)) {
+      return;
+    }
+
+    this.socket.addEventListener("message", async (event) => {
       try {
         let data = JSON.parse(event.data);
         // Util.log( JSON.stringify(data, null, 2) );
@@ -270,7 +325,7 @@ class EleventyReload {
         } else if (type === "eleventy.status") {
           // Full page reload on initial reconnect
           if (data.status === "connected" && options.mode === "reconnect") {
-            window.location.reload();
+            EleventyReload.reload({ via: "reconnect"});
           }
 
           if(data.status === "connected") {
@@ -280,12 +335,22 @@ class EleventyReload {
             }
 
             this.connectionMessageShown = true;
+            this.#ready = true;
           } else {
             if(data.status === "disconnected") {
               this.addReconnectListeners();
             }
 
             Util.log(Util.capitalize(data.status));
+          }
+        } else if(type === "eleventy.edit") {
+          // TODO edits received from other clients
+        } else if(type === "eleventy.ack") {
+          // acknowledge that a message has been received for removal on client
+          for(let ackFn of this.#ack) {
+            if(typeof ackFn) {
+              ackFn(data.id);
+            }
           }
         } else {
           Util.log("Unknown event type", data);
@@ -295,12 +360,12 @@ class EleventyReload {
       }
     });
 
-    socket.addEventListener("open", () => {
+    this.socket.addEventListener("open", () => {
       // no reconnection when the connect is already open
       this.removeReconnectListeners();
     });
 
-    socket.addEventListener("close", () => {
+    this.socket.addEventListener("close", () => {
       this.connectionMessageShown = false;
       this.addReconnectListeners(150);
     });
@@ -308,6 +373,7 @@ class EleventyReload {
 
   reconnect() {
     Util.log( "Reconnecting…" );
+    this.#socket = undefined;
     this.init({ mode: "reconnect" });
   }
 
@@ -325,14 +391,43 @@ class EleventyReload {
     setTimeout(() => {
       window.addEventListener("focus", this.reconnectEventCallback);
       window.addEventListener("visibilitychange", this.reconnectEventCallback);
+      clearInterval(this.reconnectInterval);
+
+      // TODO incremental backoff and maximum 10 reconnect tries
+      this.reconnectInterval = setInterval(this.reconnectEventCallback, 2000);
     }, delay);
   }
 
   removeReconnectListeners() {
+    clearInterval(this.reconnectInterval);
     window.removeEventListener("focus", this.reconnectEventCallback);
     window.removeEventListener("visibilitychange", this.reconnectEventCallback);
+  }
+
+  sendToServer(type, data) {
+    if(!this.#ready) {
+      throw new Error("Server is not yet ready.");
+    }
+
+    const id = crypto.randomUUID();
+
+    // used to return send(), but send() returns undefined
+    this.socket.send(JSON.stringify({
+      id,
+      type,
+      data,
+      timestamp: Date.now(),
+    }));
+
+    return { id };
+  }
+
+  onAcknowledge(callback) {
+    this.#ack.push(callback);
   }
 }
 
 let reloader = new EleventyReload();
 reloader.init();
+
+window.EleventyReload = reloader;
