@@ -701,18 +701,23 @@ export default class EleventyDevServer {
           // last-modified or etags headers, so these
           // requests are invalid.
           if (req.headers.range && !req.headers['if-range'])  {
-            fs.stat(match.filepath, (err, stat) => {
+            return fs.stat(match.filepath, (err, stat) => {
               if (err) {
                 res.statusCode = 404;
                 res.send('File not found');
                 return;
               }
 
-              const len = stat.size;
+              let len = stat.size;
+              let offset = 0;
 
               const ranges = parseRange(len, req.headers.range, {
                 combine: true
               })
+
+              // Tell clients that they can send ranges.
+              res.setHeader('Accept-Ranges', 'bytes');
+              res.setHeader('Cache-Control', 'public, max-age=0');
 
               // unsatisfiable
               if (ranges === -1) {
@@ -720,12 +725,10 @@ export default class EleventyDevServer {
                 res.statusCode = 416;
                 res.setHeader('Content-Range', this.#contentRange('bytes', len))
                 return res.end();
-              }
-
+              } else if (ranges !== -2 && ranges.length === 1) {
               // valid (syntactically invalid/multiple ranges are treated as a regular response)
-              if (ranges !== -2 && ranges.length === 1) {
                 // Content-Range
-                res.statusCode = 206
+                res.statusCode = 206;
                 res.setHeader('Content-Range', this.#contentRange('bytes', len, ranges[0]))
 
                 // adjust for requested range
@@ -747,10 +750,9 @@ export default class EleventyDevServer {
                 stream.on('error', cleanup);
                 stream.on('end', cleanup);
               }
-            })
-          } else {
-            return this.renderFile(match.filepath, res);
+            });
           }
+          return this.renderFile(match.filepath, res);
         }
 
         // Redirects, usually for trailing slash to .html stuff
