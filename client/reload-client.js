@@ -111,6 +111,9 @@ class Util {
   }
 
   static highlightNode(el, color = '#00a776', duration = 600) {
+    if(!el || el.nodeType !== Node.ELEMENT_NODE || typeof el.animate !== "function") {
+      return;
+    }
     el.animate(
       [
         { outline: `.15em solid var(--eleventy-reload-highlight, ${color})`, outlineOffset: "2px", offset: 0 },
