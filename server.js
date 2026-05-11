@@ -4,12 +4,12 @@ import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { createSecureServer } from "node:http2";
 import { createServer } from "node:http";
+import crypto from "node:crypto";
 
 import "urlpattern-polyfill";
 import finalhandler from "finalhandler";
 import WebSocket, { WebSocketServer } from "ws";
 import mime from "mime";
-import ssri from "ssri";
 import send from "send";
 import chokidar from "chokidar";
 import { TemplatePath, isPlainObject } from "@11ty/eleventy-utils";
@@ -425,7 +425,10 @@ export default class EleventyDevServer {
     return contents;
   }
 
-  // Used for the reload client only
+  /**
+   * Used for the reload client only
+   * @returns {String}
+   */
   #getFileContents(localpath, rootDir) {
     let filepath;
     let searchLocations = [];
@@ -453,7 +456,7 @@ export default class EleventyDevServer {
       scriptContents = this.#getFileContents("./client/reload-client.js");
     }
     if(!integrityHash) {
-      integrityHash = ssri.fromData(scriptContents);
+      integrityHash = this.#sri(scriptContents);
     }
 
     let searchParams = new URLSearchParams();
@@ -642,6 +645,13 @@ export default class EleventyDevServer {
     next();
   }
 
+  /**
+   * @param {String} data
+   */
+  #sri(data) {
+    return `sha512-${crypto.createHash("sha512").update(data).digest("base64")}`
+  }
+
   // This runs at the end of the middleware chain
   eleventyProjectMiddleware(req, res) {
     // Known issue with `finalhandler` and HTTP/2:
@@ -717,7 +727,7 @@ export default class EleventyDevServer {
 
       if(this.options.liveReload !== false && !isXHR) {
         let scriptContents = this.#getFileContents("./client/reload-client.js");
-        let integrityHash = ssri.fromData(scriptContents);
+        let integrityHash = this.#sri(scriptContents);
 
         // Bare (not-custom) finalhandler error pages have a Content-Security-Policy `default-src 'none'` that
         // prevents the client script from executing, so we override it
