@@ -39,6 +39,8 @@ const DEFAULT_OPTIONS = {
   chokidarOptions: {},  // Options to configure chokidar
   chokidar: undefined,  // Override to watch instance (bypasses both `watch` and `chokidarOptions`)
   aliases: {},          // Aliasing feature
+  rebuildUrl: null,     // POST URL to trigger rebuild
+  rebuildUrlToken: "",  // Secret token in x-11ty-rebuild-token header
   indexFileName: "index.html", // Allow custom index file name
   useCache: false,      // Use a cache for file contents
   headers: {},          // Set default response headers
@@ -135,7 +137,7 @@ export default class EleventyDevServer {
   }
 
   constructor(name, dir, options = {}) {
-    debug("Creating new Dev Server instance.")
+    debug("Creating new Dev Server instance.");
     this.name = name;
     this.normalizeOptions(options);
 
@@ -174,6 +176,10 @@ export default class EleventyDevServer {
     }
 
     this.options.pathPrefix = this.cleanupPathPrefix(this.options.pathPrefix);
+  }
+
+  setEventBus(_eventBus) {
+    this.eventBus = _eventBus;
   }
 
   get watcher() {
@@ -564,6 +570,18 @@ export default class EleventyDevServer {
   async eleventyDevServerMiddleware(req, res, next) {
     if(this.#serverState === "CLOSING") {
       return res.end("");
+    }
+
+    if (this.options.rebuildUrl && req.url === this.options.rebuildUrl && req.method === 'POST') {
+      const token = req.headers['x-11ty-rebuild-token'];
+      if (token !== this.options.rebuildUrlToken) {
+        res.writeHead(403, { 'Content-Type': 'text/plain' });
+        return res.end('Forbidden');
+      }
+
+      this.eventBus.emit('eleventyDevServer.rebuild');
+      res.writeHead(200);
+      return res.end();
     }
 
     for(let urlPatternString in this.options.onRequest) {
