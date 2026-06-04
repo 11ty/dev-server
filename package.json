@@ -49,7 +49,7 @@
     "morphdom": "^2.7.8",
     "send": "^1.2.1",
     "urlpattern-polyfill": "^10.1.0",
-    "ws": "^8.20.1"
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "ava": "^6.4.1"
