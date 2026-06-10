@@ -16,9 +16,7 @@
     "type": "opencollective",
     "url": "https://opencollective.com/11ty"
   },
-  "bin": {
-    "eleventy-dev-server": "./cmd.cjs"
-  },
+  "bin": "./cmd.cjs",
   "keywords": [
     "eleventy",
     "server",
