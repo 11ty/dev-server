@@ -46,7 +46,7 @@ class Util {
     }
   }
 
-  static isEleventyLinkNodeMatch(from, to) {
+  static isLinkNodeMatch(from, to) {
     // Issue #18 https://github.com/11ty/eleventy-dev-server/issues/18
     // Don’t update a <link> if the _11ty searchParam is the only thing that’s different
     if(from.tagName !== "LINK" || to.tagName !== "LINK") {
@@ -71,7 +71,7 @@ class Util {
     let newUrl = new URL(to.href);
 
     // morphdom wants to force href="style.css?_11ty" => href="style.css"
-    let paramName = EleventyReload.QUERY_PARAM;
+    let paramName = ReloadClient.CACHE_BUST_PARAM;
     let isErasing = oldUrl.searchParams.has(paramName) && !newUrl.searchParams.has(paramName);
     if(!isErasing) {
       // not a match if _11ty has a new value (not being erased)
@@ -101,7 +101,6 @@ class Util {
   static fullPageReload(options = {}) {
     let { via } = options;
     Util.log(`Full page reload (via: ${via})`);
-    // window.location.reload();
 
     if("navigation" in window) {
       navigation.navigate(location.href);
@@ -109,35 +108,25 @@ class Util {
       location.href = location.href;
     }
   }
-
-  static highlightNode(el, color = '#00a776', duration = 600) {
-    if(!el || el.nodeType !== Node.ELEMENT_NODE || typeof el.animate !== "function") {
-      return;
-    }
-    el.animate(
-      [
-        { outline: `.15em solid var(--eleventy-reload-highlight, ${color})`, outlineOffset: "2px", offset: 0 },
-        { outline: ".15em solid transparent", outlineOffset: "2px", offset: 1 }
-      ],
-      { duration, easing: 'ease-out', fill: 'none' }
-    );
-  }
 }
 
-class EleventyReload {
+class ReloadClient {
   #socket;
   #ack = [];
   #ready = false; // swap to Promise.withResolvers
 
   static RELOAD_ENABLED = true;
-  static QUERY_PARAM = "_11ty";
+  static PORT_PARAM = "reloadPort";
+  static CACHE_BUST_PARAM = "_bust";
+  static TAG_NAME = "reload-client";
+  static RECONNECT_INTERVAL = 2000; // ms
 
   static isCustomElement(node) {
     return customElements.get(node.tagName.toLowerCase())
   }
 
   setReloadEnabled(enabled) {
-    EleventyReload.RELOAD_ENABLED = Boolean(enabled);
+    ReloadClient.RELOAD_ENABLED = Boolean(enabled);
   }
 
   static reload(options = {}) {
@@ -171,7 +160,7 @@ class EleventyReload {
       for (let link of document.querySelectorAll(`link[rel="stylesheet"]`)) {
         if (link.href) {
           let url = new URL(link.href);
-          url.searchParams.set(this.QUERY_PARAM, Date.now());
+          url.searchParams.set(this.CACHE_BUST_PARAM, Date.now());
           link.href = url.toString();
         }
       }
@@ -191,7 +180,7 @@ class EleventyReload {
       }
 
       // Temporary
-      if(EleventyReload.RELOAD_ENABLED === false) {
+      if(ReloadClient.RELOAD_ENABLED === false) {
         return;
       }
 
@@ -212,32 +201,30 @@ class EleventyReload {
                 return false;
               }
             },
-            onBeforeElUpdated: function (fromEl, toEl) {
+            onBeforeElUpdated: (fromEl, toEl) => {
               if(fromEl.hasAttribute("inert")) {
-                Util.highlightNode(fromEl);
                 return false;
               }
 
               if(fromEl.matches(':is(input,textarea,select):focus')) {
-                Util.highlightNode(fromEl);
                 return false;
               }
 
               if (fromEl.nodeName === "SCRIPT" && toEl.nodeName === "SCRIPT") {
                 if(toEl.innerHTML !== fromEl.innerHTML) {
-                  EleventyReload.reload({ via: "<script> modified"});
+                  ReloadClient.reload({ via: "<script> modified"});
                 }
 
                 return false;
               }
 
-              if(Util.isEleventyLinkNodeMatch(fromEl, toEl)) {
+              if(Util.isLinkNodeMatch(fromEl, toEl)) {
                 return false;
               }
 
               return true;
             },
-            addChild: function(parent, child) {
+            addChild: (parent, child) => {
               // Declarative Shadow DOM https://github.com/11ty/eleventy-dev-server/issues/90
               if(child.nodeName === "TEMPLATE" && child.hasAttribute("shadowrootmode")) {
                 let root = parent.shadowRoot;
@@ -253,12 +240,10 @@ class EleventyReload {
               } else {
                 parent.appendChild(child);
               }
-
-              Util.highlightNode(child);
             },
             onNodeAdded: function (node) {
               if (node.nodeName === 'SCRIPT') {
-                EleventyReload.reload({ via: "<script> added"});
+                ReloadClient.reload({ via: "<script> added"});
               }
             },
             // Removed an `onElUpdated` bit that reattached custom elements (to retrigger connectedCallback methods?)
@@ -278,6 +263,7 @@ class EleventyReload {
   }
 
   constructor() {
+    this.reconnectInterval = ReloadClient.RECONNECT_INTERVAL;
     this.connectionMessageShown = false;
     this.reconnectEventCallback = this.reconnect.bind(this);
   }
@@ -288,8 +274,8 @@ class EleventyReload {
     }
 
     let documentUrl = new URL(document.location.href);
-
-    let reloadPort = new URL(import.meta.url).searchParams.get("reloadPort");
+    // Fetched from module URL
+    let reloadPort = new URL(import.meta.url).searchParams.get(ReloadClient.PORT_PARAM);
     if(reloadPort) {
       documentUrl.port = reloadPort;
     }
@@ -328,7 +314,7 @@ class EleventyReload {
         } else if (type === "eleventy.status") {
           // Full page reload on initial reconnect
           if (data.status === "connected" && options.mode === "reconnect") {
-            EleventyReload.reload({ via: "reconnect"});
+            ReloadClient.reload({ via: "reconnect"});
           }
 
           if(data.status === "connected") {
@@ -339,6 +325,7 @@ class EleventyReload {
 
             this.connectionMessageShown = true;
             this.#ready = true;
+            this.reconnectInterval = ReloadClient.RECONNECT_INTERVAL;
           } else {
             if(data.status === "disconnected") {
               this.addReconnectListeners();
@@ -374,18 +361,23 @@ class EleventyReload {
     });
   }
 
-  reconnect() {
+  reconnect(e) {
+    if(!e) {
+      // incremental backoff if via setTimeout
+      this.reconnectInterval *= 2;
+    }
+
     Util.log( "Reconnecting…" );
     this.#socket = undefined;
     this.init({ mode: "reconnect" });
   }
 
   async onreload({ subtype, files, build }) {
-    if(!EleventyReload.reloadTypes[subtype]) {
+    if(!ReloadClient.reloadTypes[subtype]) {
       subtype = "default";
     }
 
-    await EleventyReload.reloadTypes[subtype](files, build);
+    await ReloadClient.reloadTypes[subtype](files, build);
   }
 
   addReconnectListeners(delay = 0) {
@@ -394,15 +386,15 @@ class EleventyReload {
     setTimeout(() => {
       window.addEventListener("focus", this.reconnectEventCallback);
       window.addEventListener("visibilitychange", this.reconnectEventCallback);
-      clearInterval(this.reconnectInterval);
+      clearTimeout(this.reconnectTimer);
 
-      // TODO incremental backoff and maximum 10 reconnect tries
-      this.reconnectInterval = setInterval(this.reconnectEventCallback, 2000);
+      // TODO maximum 10 reconnect tries
+      this.reconnectTimer = setTimeout(this.reconnectEventCallback, this.reconnectInterval);
     }, delay);
   }
 
   removeReconnectListeners() {
-    clearInterval(this.reconnectInterval);
+    clearTimeout(this.reconnectTimer);
     window.removeEventListener("focus", this.reconnectEventCallback);
     window.removeEventListener("visibilitychange", this.reconnectEventCallback);
   }
@@ -430,7 +422,8 @@ class EleventyReload {
   }
 }
 
-let reloader = new EleventyReload();
+let reloader = new ReloadClient();
 reloader.init();
 
+// Backwards compat
 window.EleventyReload = reloader;
