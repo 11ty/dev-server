@@ -1,6 +1,6 @@
 {
   "name": "@11ty/eleventy-dev-server",
-  "version": "3.0.0-alpha.8",
+  "version": "3.0.0-alpha.9",
   "description": "A minimal, modern, generic, hot-reloading local web server to help web developers.",
   "main": "server.js",
   "type": "module",
