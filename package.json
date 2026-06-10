@@ -10,7 +10,7 @@
   },
   "license": "MIT",
   "engines": {
-    "node": ">=20.19"
+    "node": ">=22.15"
   },
   "funding": {
     "type": "opencollective",
@@ -52,6 +52,6 @@
     "ws": "^8.21.0"
   },
   "devDependencies": {
-    "ava": "^6.4.1"
+    "ava": "^8.0.1"
   }
 }

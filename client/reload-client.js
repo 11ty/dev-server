@@ -46,21 +46,24 @@ class Util {
     }
   }
 
-  static isEleventyLinkNodeMatch(from, to) {
+  static isLinkNodeMatch(from, to) {
     // Issue #18 https://github.com/11ty/eleventy-dev-server/issues/18
     // Don’t update a <link> if the _11ty searchParam is the only thing that’s different
     if(from.tagName !== "LINK" || to.tagName !== "LINK") {
       return false;
     }
 
-    let oldWithoutHref = from.cloneNode();
-    let newWithoutHref = to.cloneNode();
+    let fromClone = from.cloneNode();
+    let toClone = to.cloneNode();
 
-    oldWithoutHref.removeAttribute("href");
-    newWithoutHref.removeAttribute("href");
+    fromClone.removeAttribute("href");
+    toClone.removeAttribute("href");
+
+    // Speed-up trick from morphdom docs
+    // https://dom.spec.whatwg.org/#concept-node-equals
 
     // if all other attributes besides href match
-    if(!oldWithoutHref.isEqualNode(newWithoutHref)) {
+    if(!fromClone.isEqualNode(toClone)) {
       return false;
     }
 
@@ -68,7 +71,7 @@ class Util {
     let newUrl = new URL(to.href);
 
     // morphdom wants to force href="style.css?_11ty" => href="style.css"
-    let paramName = EleventyReload.QUERY_PARAM;
+    let paramName = ReloadClient.CACHE_BUST_PARAM;
     let isErasing = oldUrl.searchParams.has(paramName) && !newUrl.searchParams.has(paramName);
     if(!isErasing) {
       // not a match if _11ty has a new value (not being erased)
@@ -95,14 +98,43 @@ class Util {
     (target || source).replaceWith(script);
   }
 
-  static fullPageReload() {
-    Util.log(`Page reload initiated.`);
-    window.location.reload();
+  static fullPageReload(options = {}) {
+    let { via } = options;
+    Util.log(`Full page reload (via: ${via})`);
+
+    if("navigation" in window) {
+      navigation.navigate(location.href);
+    } else {
+      location.href = location.href;
+    }
   }
 }
 
-class EleventyReload {
-  static QUERY_PARAM = "_11ty";
+class ReloadClient {
+  #socket;
+  #ack = [];
+  #ready = false; // swap to Promise.withResolvers
+
+  static RELOAD_ENABLED = true;
+  static PORT_PARAM = "reloadPort";
+  static CACHE_BUST_PARAM = "_bust";
+  static TAG_NAME = "reload-client";
+  static RECONNECT_INTERVAL = 2000; // ms
+
+  static isCustomElement(node) {
+    return customElements.get(node.tagName.toLowerCase())
+  }
+
+  setReloadEnabled(enabled) {
+    ReloadClient.RELOAD_ENABLED = Boolean(enabled);
+  }
+
+  static reload(options = {}) {
+    if(!this.RELOAD_ENABLED) {
+      return;
+    }
+    Util.fullPageReload(options);
+  }
 
   static reloadTypes = {
     css: (files, build = {}) => {
@@ -120,7 +152,7 @@ class EleventyReload {
         }
 
         if(!match) {
-          Util.fullPageReload();
+          this.reload({ via: "css" });
           return;
         }
       }
@@ -128,7 +160,7 @@ class EleventyReload {
       for (let link of document.querySelectorAll(`link[rel="stylesheet"]`)) {
         if (link.href) {
           let url = new URL(link.href);
-          url.searchParams.set(this.QUERY_PARAM, Date.now());
+          url.searchParams.set(this.CACHE_BUST_PARAM, Date.now());
           link.href = url.toString();
         }
       }
@@ -141,8 +173,14 @@ class EleventyReload {
         return url === document.location.pathname && (files || []).includes(inputPath);
       });
 
+      // Not eligible for domDiff
       if(domdiffTemplates.length === 0) {
-        Util.fullPageReload();
+        this.reload({ via: "ineligible domdiff"});
+        return;
+      }
+
+      // Temporary
+      if(ReloadClient.RELOAD_ENABLED === false) {
         return;
       }
 
@@ -155,30 +193,38 @@ class EleventyReload {
           morphed = true;
 
           morphdom(document.documentElement, content, {
-            childrenOnly: true,
-            onBeforeElUpdated: function (fromEl, toEl) {
+            childrenOnly: false,
+            onBeforeNodeDiscarded: function(node) {
+              // Don’t discard stylesheets inserted via script! (e.g. Web Awesome)
+              // TODO maybe more defensive?
+              if((node?.tagName || "").toLowerCase() === "link") {
+                return false;
+              }
+            },
+            onBeforeElUpdated: (fromEl, toEl) => {
+              if(fromEl.hasAttribute("inert")) {
+                return false;
+              }
+
+              if(fromEl.matches(':is(input,textarea,select):focus')) {
+                return false;
+              }
+
               if (fromEl.nodeName === "SCRIPT" && toEl.nodeName === "SCRIPT") {
                 if(toEl.innerHTML !== fromEl.innerHTML) {
-                  Util.log(`JavaScript modified, reload initiated.`);
-                  window.location.reload();
+                  ReloadClient.reload({ via: "<script> modified"});
                 }
 
                 return false;
               }
 
-              // Speed-up trick from morphdom docs
-              // https://dom.spec.whatwg.org/#concept-node-equals
-              if (fromEl.isEqualNode(toEl)) {
-                return false;
-              }
-
-              if(Util.isEleventyLinkNodeMatch(fromEl, toEl)) {
+              if(Util.isLinkNodeMatch(fromEl, toEl)) {
                 return false;
               }
 
               return true;
             },
-            addChild: function(parent, child) {
+            addChild: (parent, child) => {
               // Declarative Shadow DOM https://github.com/11ty/eleventy-dev-server/issues/90
               if(child.nodeName === "TEMPLATE" && child.hasAttribute("shadowrootmode")) {
                 let root = parent.shadowRoot;
@@ -197,21 +243,10 @@ class EleventyReload {
             },
             onNodeAdded: function (node) {
               if (node.nodeName === 'SCRIPT') {
-                Util.log(`JavaScript added, reload initiated.`);
-                window.location.reload();
+                ReloadClient.reload({ via: "<script> added"});
               }
             },
-            onElUpdated: function(node) {
-              // Re-attach custom elements
-              if(customElements.get(node.tagName.toLowerCase())) {
-                let placeholder = document.createElement("div");
-                node.replaceWith(placeholder);
-                requestAnimationFrame(() => {
-                  placeholder.replaceWith(node);
-                  placeholder = undefined;
-                });
-              }
-            }
+            // Removed an `onElUpdated` bit that reattached custom elements (to retrigger connectedCallback methods?)
           });
 
           Util.matchRootAttributes(content);
@@ -222,24 +257,25 @@ class EleventyReload {
       }
 
       if (!morphed) {
-        Util.fullPageReload();
+        this.reload({ via: "no domdiff content received" });
       }
     }
   }
 
   constructor() {
+    this.reconnectInterval = ReloadClient.RECONNECT_INTERVAL;
     this.connectionMessageShown = false;
     this.reconnectEventCallback = this.reconnect.bind(this);
   }
 
-  init(options = {}) {
-    if (!("WebSocket" in window)) {
-      return;
+  get socket() {
+    if(this.#socket) {
+      return this.#socket;
     }
 
     let documentUrl = new URL(document.location.href);
-
-    let reloadPort = new URL(import.meta.url).searchParams.get("reloadPort");
+    // Fetched from module URL
+    let reloadPort = new URL(import.meta.url).searchParams.get(ReloadClient.PORT_PARAM);
     if(reloadPort) {
       documentUrl.port = reloadPort;
     }
@@ -249,9 +285,17 @@ class EleventyReload {
     // works with http (ws) and https (wss)
     let websocketProtocol = protocol.replace("http", "ws");
 
-    let socket = new WebSocket(`${websocketProtocol}//${host}`);
+    this.#socket = new WebSocket(`${websocketProtocol}//${host}`);
 
-    socket.addEventListener("message", async (event) => {
+    return this.#socket;
+  }
+
+  init(options = {}) {
+    if (!("WebSocket" in window)) {
+      return;
+    }
+
+    this.socket.addEventListener("message", async (event) => {
       try {
         let data = JSON.parse(event.data);
         // Util.log( JSON.stringify(data, null, 2) );
@@ -270,7 +314,7 @@ class EleventyReload {
         } else if (type === "eleventy.status") {
           // Full page reload on initial reconnect
           if (data.status === "connected" && options.mode === "reconnect") {
-            window.location.reload();
+            ReloadClient.reload({ via: "reconnect"});
           }
 
           if(data.status === "connected") {
@@ -280,12 +324,23 @@ class EleventyReload {
             }
 
             this.connectionMessageShown = true;
+            this.#ready = true;
+            this.reconnectInterval = ReloadClient.RECONNECT_INTERVAL;
           } else {
             if(data.status === "disconnected") {
               this.addReconnectListeners();
             }
 
             Util.log(Util.capitalize(data.status));
+          }
+        } else if(type === "eleventy.edit") {
+          // TODO edits received from other clients
+        } else if(type === "eleventy.ack") {
+          // acknowledge that a message has been received for removal on client
+          for(let ackFn of this.#ack) {
+            if(typeof ackFn) {
+              ackFn(data.id);
+            }
           }
         } else {
           Util.log("Unknown event type", data);
@@ -295,28 +350,34 @@ class EleventyReload {
       }
     });
 
-    socket.addEventListener("open", () => {
+    this.socket.addEventListener("open", () => {
       // no reconnection when the connect is already open
       this.removeReconnectListeners();
     });
 
-    socket.addEventListener("close", () => {
+    this.socket.addEventListener("close", () => {
       this.connectionMessageShown = false;
       this.addReconnectListeners(150);
     });
   }
 
-  reconnect() {
+  reconnect(e) {
+    if(!e) {
+      // incremental backoff if via setTimeout
+      this.reconnectInterval *= 2;
+    }
+
     Util.log( "Reconnecting…" );
+    this.#socket = undefined;
     this.init({ mode: "reconnect" });
   }
 
   async onreload({ subtype, files, build }) {
-    if(!EleventyReload.reloadTypes[subtype]) {
+    if(!ReloadClient.reloadTypes[subtype]) {
       subtype = "default";
     }
 
-    await EleventyReload.reloadTypes[subtype](files, build);
+    await ReloadClient.reloadTypes[subtype](files, build);
   }
 
   addReconnectListeners(delay = 0) {
@@ -325,14 +386,44 @@ class EleventyReload {
     setTimeout(() => {
       window.addEventListener("focus", this.reconnectEventCallback);
       window.addEventListener("visibilitychange", this.reconnectEventCallback);
+      clearTimeout(this.reconnectTimer);
+
+      // TODO maximum 10 reconnect tries
+      this.reconnectTimer = setTimeout(this.reconnectEventCallback, this.reconnectInterval);
     }, delay);
   }
 
   removeReconnectListeners() {
+    clearTimeout(this.reconnectTimer);
     window.removeEventListener("focus", this.reconnectEventCallback);
     window.removeEventListener("visibilitychange", this.reconnectEventCallback);
   }
+
+  sendToServer(type, data) {
+    if(!this.#ready) {
+      throw new Error("Server is not yet ready.");
+    }
+
+    const id = crypto.randomUUID();
+
+    // used to return send(), but send() returns undefined
+    this.socket.send(JSON.stringify({
+      id,
+      type,
+      data,
+      timestamp: Date.now(),
+    }));
+
+    return { id };
+  }
+
+  onAcknowledge(callback) {
+    this.#ack.push(callback);
+  }
 }
 
-let reloader = new EleventyReload();
+let reloader = new ReloadClient();
 reloader.init();
+
+// Backwards compat
+window.EleventyReload = reloader;

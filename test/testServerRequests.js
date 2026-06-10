@@ -380,3 +380,62 @@ test("Default response headers cannot overwrite content-type", async (t) => {
 
   await server.close();
 });
+
+function withResolvers() {
+  let resolve;
+  let reject;
+  let promise = new Promise(res => resolve = res, rej => reject = rej);
+  return {
+    promise, resolve, reject
+  };
+}
+
+test("Web Socket request", async (t) => {
+  let server = new EleventyDevServer("test-server", "./test/stubs/", getOptions());
+  server.serve(8200);
+
+  let port = await server.getPort();
+  t.is(8200, port);
+
+  let socket = new WebSocket(`ws://localhost:${port}`);
+
+  let promises = [];
+  promises.push(withResolvers());
+  promises.push(withResolvers());
+
+  socket.addEventListener("message", (event) => {
+    promises[0].resolve(event);
+  }, {
+    once: true
+  });
+  let e1 = await promises[0].promise;
+  let e1Data = JSON.parse(e1.data);
+
+  socket.addEventListener("message", (event) => {
+    promises[1].resolve(event);
+  }, {
+    once: true
+  });
+
+  server.sendUpdateNotification({
+    type: "eleventy.msg",
+    data: "TESTING"
+  });
+
+  let e2 = await promises[1].promise;
+  let e2Data = JSON.parse(e2.data);
+
+  t.is( server.updateServer?.clients?.size, 1);
+  t.truthy(e1Data);
+  t.truthy(e2Data);
+
+  t.is(e1Data.type, "eleventy.status");
+  t.is(e1Data.status, "connected");
+
+  t.is(e2Data.type, "eleventy.msg");
+  t.is(e2Data.data, "TESTING");
+
+  await server.close();  
+});
+
+// TODO setup websocket server *without* web server

@@ -71,7 +71,11 @@ const DEFAULT_OPTIONS = {
     info: console.log,
     log: console.log,
     error: console.error,
-  }
+  },
+
+  onClientMessage: function({ id, type, data, timestamp }) {
+    // console.log( "Received:", data );
+  },
 }
 
 // Common web file extensions and their content types
@@ -907,11 +911,25 @@ export default class EleventyDevServer {
     }
 
     let updateServer = new WebSocketServer(options);
-
     updateServer.on("connection", (ws) => {
       this.sendUpdateNotification({
         type: "eleventy.status",
         status: "connected",
+      }, { include: ws });
+
+      ws.on("message", (data) => {
+        let parsed = JSON.parse(data.toString());
+        if(parsed.id) {
+          // send acknowledgement
+          this.sendUpdateNotification({
+            type: "eleventy.ack",
+            id: parsed.id,
+          })
+        }
+
+        if(typeof this.options.onClientMessage === "function") {
+          this.options.onClientMessage(parsed);
+        }
       });
     });
 
@@ -923,13 +941,14 @@ export default class EleventyDevServer {
   }
 
   // Broadcasts to all open browser windows
-  sendUpdateNotification(obj) {
+  sendUpdateNotification(obj, options = {}) {
     if(!this.updateServer?.clients) {
       return;
     }
 
+    let { include } = options;
     for(let client of this.updateServer.clients) {
-      if (client.readyState === WebSocket.OPEN) {
+      if ((!include || include === client) && client.readyState === WebSocket.OPEN) {
         client.send(JSON.stringify(obj));
       }
     }
