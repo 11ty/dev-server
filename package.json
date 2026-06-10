@@ -32,10 +32,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "git://github.com/11ty/eleventy-dev-server.git"
+    "url": "git://github.com/11ty/dev-server.git"
   },
-  "bugs": "https://github.com/11ty/eleventy-dev-server/issues",
-  "homepage": "https://github.com/11ty/eleventy-dev-server/",
+  "bugs": "https://github.com/11ty/dev-server/issues",
+  "homepage": "https://github.com/11ty/dev-server/",
   "dependencies": {
     "@11ty/eleventy-utils": "^2.0.7",
     "@11ty/node-version-check": "^1.0.1",
