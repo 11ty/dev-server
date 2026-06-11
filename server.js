@@ -1011,7 +1011,7 @@ export default class EleventyDevServer {
     return this.#serverClosing;
   }
 
-  #log(callback, options) {
+  #logCallback(callback, options) {
     let fn = typeof callback === "function" ? callback : () => false;
     let message = fn(Object.assign({
       options: this.options,
@@ -1025,7 +1025,7 @@ export default class EleventyDevServer {
 
   logStartMessage() {
     let hosts = this.getHosts();
-    this.#log(this.options.messageOnStart, {
+    this.#logCallback(this.options.messageOnStart, {
       hosts,
       localhostUrl: this.getServerUrl("localhost"),
       startupTime: Date.now() - this.start,
@@ -1033,7 +1033,7 @@ export default class EleventyDevServer {
   }
 
   logCloseMessage() {
-    this.#log(this.options.messageOnClose);
+    this.#logCallback(this.options.messageOnClose);
   }
 
   sendError({ error }) {
