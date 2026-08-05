@@ -22,6 +22,7 @@ const require = createRequire(import.meta.url);
 const pkg = require("./package.json");
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const debug = debugUtil("Eleventy:DevServer");
+const BYTES_RANGE_REGEXP = /^ *bytes=/
 
 const DEFAULT_OPTIONS = {
   port: 8080,
@@ -502,6 +503,10 @@ export default class EleventyDevServer {
     return (content || "") + script;
   }
 
+  /**
+   * Infer a content-type from a filepath.
+   * @returns {string|undefined}
+   */
   getFileContentType(filepath, res) {
     let contentType = res.getHeader("Content-Type");
 
@@ -656,7 +661,7 @@ export default class EleventyDevServer {
   /**
    * @param {String} type
    * @param {number} size
-   * @param {number=} range
+   * @param {{start: number, end: number} | undefined} range
    */
   #contentRange(type, size, range) {
     return type + ' ' + (range ? range.start + '-' + range.end : '*') + '/' + size
@@ -700,16 +705,16 @@ export default class EleventyDevServer {
           // serve them the whole thing. We don't include
           // last-modified or etags headers, so these
           // requests are invalid.
-          if (req.headers.range && !req.headers['if-range'])  {
+          if (BYTES_RANGE_REGEXP.test(req.headers.range) && !req.headers['if-range'])  {
             return fs.stat(match.filepath, (err, stat) => {
               if (err) {
                 res.statusCode = 404;
-                res.send('File not found');
+                res.end('File not found');
                 return;
               }
 
+              let contentType = this.getFileContentType(match.filepath, res);
               let len = stat.size;
-              let offset = 0;
 
               const ranges = parseRange(len, req.headers.range, {
                 combine: true
@@ -718,6 +723,9 @@ export default class EleventyDevServer {
               // Tell clients that they can send ranges.
               res.setHeader('Accept-Ranges', 'bytes');
               res.setHeader('Cache-Control', 'public, max-age=0');
+              if (contentType) {
+                res.setHeader("Content-Type", contentType);
+              }
 
               // unsatisfiable
               if (ranges === -1) {
@@ -734,7 +742,7 @@ export default class EleventyDevServer {
                 // adjust for requested range
                 let start = ranges[0].start
                 len = ranges[0].end - ranges[0].start + 1
-                let end = Math.max(offset, offset + len - 1)
+                let end = ranges[0].end
                 res.setHeader('Content-Length', len)
                 if (req.method === 'HEAD') {
                   res.end()
@@ -746,9 +754,14 @@ export default class EleventyDevServer {
                 stream.pipe(res);
                 const cleanup = () => {
                   stream.destroy();
+                  res.destroy();
                 }
+                res.on('close', cleanup);
                 stream.on('error', cleanup);
                 stream.on('end', cleanup);
+              } else {
+                // Just send multi-range requests as full files.
+                return this.renderFile(match.filepath, res);
               }
             });
           }
@@ -943,8 +956,11 @@ export default class EleventyDevServer {
     return this.getServerUrlRaw(host, pathname, false);
   }
 
+  _portPromise = null;
+
   async getPort() {
-    return new Promise(resolve => {
+    if (this._portPromise) return this._portPromise;
+    return this._portPromise = new Promise(resolve => {
       this.server.on("listening", (e) => {
         let { port } = this._server.address();
         resolve(port);
