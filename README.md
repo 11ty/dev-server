@@ -24,7 +24,7 @@ npm install -g @11ty/eleventy-dev-server
 npm install @11ty/eleventy-dev-server
 ```
 
-This package requires Node 18 or newer.
+This package requires Node 22.15 or newer.
 
 ### CLI Usage
 
@@ -52,5 +52,5 @@ npm run test
 
 ## Changelog
 
-- `v3.0.0` bumps Node.js minimum to 20, [`chokidar@4` drops support for globs in `watch` option](https://github.com/paulmillr/chokidar#upgrading)
+- `v3.0.0` bumps Node.js minimum to 22.15, [`chokidar@4` drops support for globs in `watch` option](https://github.com/paulmillr/chokidar#upgrading)
 - `v2.0.0` bumps Node.js minimum to 18.

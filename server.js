@@ -13,7 +13,7 @@ import mime from "mime";
 import parseRange from "range-parser";
 import chokidar from "chokidar";
 import { TemplatePath, isPlainObject } from "@11ty/eleventy-utils";
-import debugUtil from "debug";
+import { createDebug } from "obug";
 
 import wrapResponse from "./server/wrapResponse.js";
 import ipAddress from "./server/ipAddress.js";
@@ -21,7 +21,7 @@ import ipAddress from "./server/ipAddress.js";
 const require = createRequire(import.meta.url);
 const pkg = require("./package.json");
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const debug = debugUtil("Eleventy:DevServer");
+const debug = createDebug("Eleventy:DevServer");
 const BYTES_RANGE_REGEXP = /^ *bytes=/
 
 const DEFAULT_OPTIONS = {

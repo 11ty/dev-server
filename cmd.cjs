@@ -15,8 +15,6 @@ require("@11ty/node-version-check")(pkg, {
 
 const { Logger, Cli } = require("./cli.js");
 
-const debug = require("debug")("Eleventy:DevServer");
-
 try {
   const defaults = Cli.getDefaultOptions();
   for(let key in defaults) {
@@ -45,7 +43,11 @@ try {
     },
   });
 
-  debug("command: eleventy-dev-server %o", argv);
+  // Older Node friendly import workaround (this is a CommonJS file)
+  import("obug").then(({ createDebug }) => {
+    const debug = createDebug("Eleventy:DevServer");
+    debug("CLI arguments: %o", argv);
+  });
 
   process.on("unhandledRejection", (error, promise) => {
     Logger.fatal("Unhandled rejection in promise:", promise, error);
