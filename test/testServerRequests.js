@@ -12,21 +12,28 @@ function getOptions(options = {}) {
   return options;
 }
 
-async function makeRequestTo(t, server, path) {
+// Available status codes can be found here: http.STATUS_CODES
+const successCodes = new Set([
+  200, // OK
+  206, // Partial Content
+]);
+
+async function makeRequestTo(t, server, path, extras = {}) {
   let port = await server.getPort();
 
-  return new Promise(resolve => {
+  return new Promise((resolve, reject) => {
     const options = {
       hostname: 'localhost',
       port,
       path,
       method: 'GET',
+      ...extras
     };
 
     http.get(options, (res) => {
       const { statusCode } = res;
-      if(statusCode !== 200) {
-        throw new Error("Invalid status code" + statusCode);
+      if(!successCodes.has(statusCode)) {
+        return reject(new Error("Invalid status code" + statusCode));
       }
 
       res.setEncoding('utf8');
@@ -46,7 +53,7 @@ async function makeRequestTo(t, server, path) {
 async function fetchHeadersForRequest(t, server, path, extras) {
   let port = await server.getPort();
 
-  return new Promise(resolve => {
+  return new Promise((resolve, reject) => {
     const options = {
       hostname: 'localhost',
       port,
@@ -55,15 +62,10 @@ async function fetchHeadersForRequest(t, server, path, extras) {
       ...extras,
     };
 
-    // Available status codes can be found here: http.STATUS_CODES
-    const successCodes = [
-      200, // OK
-      206, // Partial Content
-    ];
     http.get(options, (res) => {
       const { statusCode } = res;
-      if (!successCodes.includes(statusCode)) {
-        throw new Error("Invalid status code " + statusCode);
+      if (!successCodes.has(statusCode)) {
+        return reject(new Error("Invalid status code " + statusCode));
       }
 
       let headers = res.headers;
@@ -319,14 +321,63 @@ test("Content-Range request", async (t) => {
   server.serve(8100);
 
   const options = { headers: { Range: "bytes=0-48" } };
-  let data = await fetchHeadersForRequest(t, server, `/index.html`, options);
-  t.true("accept-ranges" in data);
-  t.true(data["accept-ranges"] === "bytes");
-  t.true("content-range" in data);
-  t.true(data["content-range"].startsWith("bytes 0-48/"));
+  let headers = await fetchHeadersForRequest(t, server, `/index.html`, options);
+  t.true("accept-ranges" in headers);
+  t.true(headers["accept-ranges"] === "bytes");
+  t.true("content-range" in headers);
+  t.true(headers["content-range"].startsWith("bytes 0-48/"));
+
+  let data = await makeRequestTo(t, server, `/index.html`, options);
+  t.is(data.length, 49);
 
   await server.close();
 });
+
+test("Content-Range request multiple is handled as full", async (t) => {
+  let server = new EleventyDevServer(
+    "test-server",
+    "./test/stubs/",
+    getOptions()
+  );
+  server.serve(8100);
+
+  const options = { headers: { Range: "bytes=0-10,20-30" } };
+  let headers = await fetchHeadersForRequest(t, server, `/index.html`, options);
+  t.true("accept-ranges" in headers);
+  t.true(headers["accept-ranges"] === "bytes");
+
+  await server.close();
+});
+
+test("Content-Range request invalid", async (t) => {
+  let server = new EleventyDevServer(
+    "test-server",
+    "./test/stubs/",
+    getOptions()
+  );
+  server.serve(8100);
+
+  const options = { headers: { Range: "bytes=xxx" } };
+  let data = await fetchHeadersForRequest(t, server, `/index.html`, options);
+  t.true("accept-ranges" in data);
+  t.true(data["accept-ranges"] === "bytes");
+
+  await server.close();
+});
+
+test("Content-Range request invalid reversed", async (t) => {
+  let server = new EleventyDevServer(
+    "test-server",
+    "./test/stubs/",
+    getOptions()
+  );
+  server.serve(8100);
+  const options = { headers: { Range: "bytes=100-0" } };
+  await t.throwsAsync(() => fetchHeadersForRequest(t, server, `/index.html`, options), {
+    instanceOf: Error, message: 'Invalid status code 416'
+  })
+  await server.close();
+})
 
 test("Standard request does not include range headers", async (t) => {
   let server = new EleventyDevServer(

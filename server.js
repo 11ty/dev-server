@@ -10,7 +10,7 @@ import "urlpattern-polyfill";
 import finalhandler from "finalhandler";
 import WebSocket, { WebSocketServer } from "ws";
 import mime from "mime";
-import send from "send";
+import parseRange from "range-parser";
 import chokidar from "chokidar";
 import { TemplatePath, isPlainObject } from "@11ty/eleventy-utils";
 import debugUtil from "debug";
@@ -22,6 +22,7 @@ const require = createRequire(import.meta.url);
 const pkg = require("./package.json");
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const debug = debugUtil("Eleventy:DevServer");
+const BYTES_RANGE_REGEXP = /^ *bytes=/
 
 const DEFAULT_OPTIONS = {
   port: 8080,
@@ -502,6 +503,10 @@ export default class EleventyDevServer {
     return (content || "") + script;
   }
 
+  /**
+   * Infer a content-type from a filepath.
+   * @returns {string|undefined}
+   */
   getFileContentType(filepath, res) {
     let contentType = res.getHeader("Content-Type");
 
@@ -653,6 +658,20 @@ export default class EleventyDevServer {
   }
 
   // This runs at the end of the middleware chain
+  /**
+   * @param {String} type
+   * @param {number} size
+   * @param {{start: number, end: number} | undefined} range
+   */
+  #contentRange(type, size, range) {
+    return type + ' ' + (range ? range.start + '-' + range.end : '*') + '/' + size
+  }
+
+  /**
+   * @param {import('node:http').IncomingMessage} req
+   * @param {import('node:http').OutgoingMessage} res
+   * This runs at the end of the middleware chain
+   */
   eleventyProjectMiddleware(req, res) {
     // Known issue with `finalhandler` and HTTP/2:
     // UnsupportedWarning: Status message is not supported by HTTP/2 (RFC7540 8.1.2.4)
@@ -682,10 +701,70 @@ export default class EleventyDevServer {
       if (match) {
         if (match.statusCode === 200 && match.filepath) {
           // Content-Range request, probably Safari trying to stream video
-          if (req.headers.range)  {
-            return send(req, match.filepath).pipe(res);
-          }
+          // If the client includes an If-Range header,
+          // serve them the whole thing. We don't include
+          // last-modified or etags headers, so these
+          // requests are invalid.
+          if (BYTES_RANGE_REGEXP.test(req.headers.range) && !req.headers['if-range'])  {
+            return fs.stat(match.filepath, (err, stat) => {
+              if (err) {
+                res.statusCode = 404;
+                res.end('File not found');
+                return;
+              }
 
+              let contentType = this.getFileContentType(match.filepath, res);
+              let len = stat.size;
+
+              const ranges = parseRange(len, req.headers.range, {
+                combine: true
+              })
+
+              // Tell clients that they can send ranges.
+              res.setHeader('Accept-Ranges', 'bytes');
+              res.setHeader('Cache-Control', 'public, max-age=0');
+              if (contentType) {
+                res.setHeader("Content-Type", contentType);
+              }
+
+              // unsatisfiable
+              if (ranges === -1) {
+                // 416 Requested Range Not Satisfiable
+                res.statusCode = 416;
+                res.setHeader('Content-Range', this.#contentRange('bytes', len))
+                return res.end();
+              } else if (ranges !== -2 && ranges.length === 1) {
+              // valid (syntactically invalid/multiple ranges are treated as a regular response)
+                // Content-Range
+                res.statusCode = 206;
+                res.setHeader('Content-Range', this.#contentRange('bytes', len, ranges[0]))
+
+                // adjust for requested range
+                let start = ranges[0].start
+                len = ranges[0].end - ranges[0].start + 1
+                let end = ranges[0].end
+                res.setHeader('Content-Length', len)
+                if (req.method === 'HEAD') {
+                  res.end()
+                  return
+                }
+                const stream = fs.createReadStream(match.filepath, {
+                  start, end
+                });
+                stream.pipe(res);
+                const cleanup = () => {
+                  stream.destroy();
+                  res.destroy();
+                }
+                res.on('close', cleanup);
+                stream.on('error', cleanup);
+                stream.on('end', cleanup);
+              } else {
+                // Just send multi-range requests as full files.
+                return this.renderFile(match.filepath, res);
+              }
+            });
+          }
           return this.renderFile(match.filepath, res);
         }
 
@@ -877,8 +956,11 @@ export default class EleventyDevServer {
     return this.getServerUrlRaw(host, pathname, false);
   }
 
+  _portPromise = null;
+
   async getPort() {
-    return new Promise(resolve => {
+    if (this._portPromise) return this._portPromise;
+    return this._portPromise = new Promise(resolve => {
       this.server.on("listening", (e) => {
         let { port } = this._server.address();
         resolve(port);
