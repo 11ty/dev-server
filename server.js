@@ -851,7 +851,14 @@ export default class EleventyDevServer {
     bound.reverse();
 
     let [first] = bound;
-    await first();
+    try {
+      await first();
+    } catch(e) {
+      if(!res.headersSent) {
+        res.statusCode = 400;
+        res.end("Bad Request");
+      }
+    }
   }
 
   getHosts() {
