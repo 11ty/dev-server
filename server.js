@@ -1000,7 +1000,12 @@ export default class EleventyDevServer {
       }, { include: ws });
 
       ws.on("message", (data) => {
-        let parsed = JSON.parse(data.toString());
+        let parsed;
+        try {
+          parsed = JSON.parse(data.toString());
+        } catch(e) {
+          return;
+        }
         if(parsed.id) {
           // send acknowledgement
           this.sendUpdateNotification({
