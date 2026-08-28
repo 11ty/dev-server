@@ -128,6 +128,8 @@ const CONTENT_TYPES = {
   '.zip': 'application/zip',
 };
 
+const POLITE_WEBSOCKET_CLOSE_TIMEOUT = 50; // in ms
+
 export default class EleventyDevServer {
   #watcher;
   #serverClosing;
@@ -1069,7 +1071,12 @@ export default class EleventyDevServer {
     let promises = []
     if(this.updateServer) {
       // Close all existing WS connections.
-      this.updateServer?.clients.forEach(socket => socket.close());
+      this.updateServer?.clients.forEach(socket => {
+        socket.close();
+        // More aggressive close, `close()` waits for a response from the client and terminate does not.
+        setTimeout(() => socket.terminate(), POLITE_WEBSOCKET_CLOSE_TIMEOUT);
+      });
+      
       promises.push(this._closeServer(this.updateServer));
     }
 
