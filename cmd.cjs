@@ -17,31 +17,37 @@ const { Logger, Cli } = require("./cli.js");
 
 try {
   const defaults = Cli.getDefaultOptions();
-  for(let key in defaults) {
-    if(key.toLowerCase() !== key) {
-      defaults[key.toLowerCase()] = defaults[key];
-      delete defaults[key];
-    }
-  }
 
-  const argv = require("minimist")(process.argv.slice(2), {
-    string: [
-      "dir",
-      "input", // alias for dir
-      "port",
-    ],
-    boolean: [
-      "version",
-      "help",
-      "domdiff",
-    ],
-    default: defaults,
-    unknown: function (unknownArgument) {
-      throw new Error(
-        `We don’t know what '${unknownArgument}' is. Use --help to see the list of supported commands.`
-      );
+  const { parseArgs } = require("node:util");
+
+  const args = process.argv.slice(2);
+  const options = {
+    dir: {
+      type: "string",
     },
-  });
+    input: {
+      type: "string",
+      default: defaults.input,
+    },
+    port: {
+      type: "string",
+      default: defaults.port,
+    },
+    domdiff: {
+      type: "boolean",
+      default: defaults.domDiff,
+    },
+    help: {
+      type: "boolean",
+      default: false,
+    },
+    version: {
+      type: "boolean",
+      default: false,
+    },
+  };
+
+  const { values: argv } = parseArgs({ args, options });
 
   // Older Node friendly import workaround (this is a CommonJS file)
   import("obug").then(({ createDebug }) => {
@@ -75,5 +81,13 @@ try {
     });
   }
 } catch (e) {
+  if (e instanceof TypeError) {
+    const unknownArgument = e.message.split(" ").pop();
+
+    e = new Error(
+      `We don’t know what ${unknownArgument} is. Use --help to see the list of supported commands.`
+    );
+  }
+
   Logger.fatal("Fatal Error:", e)
 }
