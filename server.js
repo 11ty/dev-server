@@ -1073,8 +1073,11 @@ export default class EleventyDevServer {
       // Close all existing WS connections.
       this.updateServer?.clients.forEach(socket => {
         socket.close();
-        // More aggressive close, `close()` waits for a response from the client and terminate does not.
-        setTimeout(() => socket.terminate(), POLITE_WEBSOCKET_CLOSE_TIMEOUT);
+
+        if("terminate" in socket) {
+          // More aggressive close, `close()` waits for a response from the client and terminate does not.
+          setTimeout(() => socket.terminate(), POLITE_WEBSOCKET_CLOSE_TIMEOUT);
+        }
       });
       
       promises.push(this._closeServer(this.updateServer));
