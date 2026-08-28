@@ -302,6 +302,14 @@ export default class EleventyDevServer {
 
     computedPath = decodeURIComponent(computedPath);
 
+    // Reject a literal `..` path segment that only appears after percent-decoding.
+    // This closes a bypass where a `%2f`-encoded separator survives the URL layer's
+    // own dot-segment normalization (which only recognizes literal `/`), then decodes
+    // into a real `../` here, escaping `this.dir` via a same-prefix sibling directory.
+    if(computedPath.split(path.sep).includes("..")) {
+      throw new Error("Invalid path");
+    }
+
     if(!filename) { // is a direct URL request (not an implicit .html or index.html add)
       let alias = this.matchPassthroughAlias(filepath);
 
