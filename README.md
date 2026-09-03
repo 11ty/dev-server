@@ -42,6 +42,26 @@ npx @11ty/eleventy-dev-server --domdiff=false
 npx @11ty/eleventy-dev-server --help
 ```
 
+## Server thread
+
+The HTTP server runs on a worker thread by default, so requests stay fast even while a large
+Eleventy build is occupying the main thread. Without it, request latency matches the longest
+uninterrupted synchronous stretch of the build — a build rendering in 200ms chunks makes every
+request wait ~200ms.
+
+Static files, redirects, 404s and the injected client scripts are served entirely from the server
+thread and never touch the main thread. Requests that need your code (`middleware` and `onRequest`,
+which are closures and cannot cross a thread boundary) are handed to the main thread, so those are
+no faster than before — but no slower either.
+
+Opt out with:
+
+```js
+{
+  serverThread: false
+}
+```
+
 ## Tests
 
 ```
@@ -52,5 +72,5 @@ npm run test
 
 ## Changelog
 
-- `v3.0.0` bumps Node.js minimum to 22.15, [`chokidar@4` drops support for globs in `watch` option](https://github.com/paulmillr/chokidar#upgrading)
+- `v3.0.0` runs the HTTP server on a worker thread by default (opt out with `serverThread: false`), bumps Node.js minimum to 22.15, [`chokidar@4` drops support for globs in `watch` option](https://github.com/paulmillr/chokidar#upgrading)
 - `v2.0.0` bumps Node.js minimum to 18.

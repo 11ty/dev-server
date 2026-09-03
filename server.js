@@ -1,28 +1,27 @@
 import path from "node:path";
 import fs from "node:fs";
+import http from "node:http";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { createSecureServer } from "node:http2";
 import { createServer } from "node:http";
-import crypto from "node:crypto";
+import { Worker } from "node:worker_threads";
 
 import "urlpattern-polyfill";
-import finalhandler from "finalhandler";
 import WebSocket, { WebSocketServer } from "ws";
 import mime from "mime";
-import parseRange from "range-parser";
 import chokidar from "chokidar";
-import { TemplatePath, isPlainObject } from "@11ty/eleventy-utils";
+import { isPlainObject } from "@11ty/eleventy-utils";
 import { createDebug } from "obug";
 
 import wrapResponse from "./server/wrapResponse.js";
 import ipAddress from "./server/ipAddress.js";
+import StaticFiles from "./server/staticFiles.js";
 
 const require = createRequire(import.meta.url);
 const pkg = require("./package.json");
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const debug = createDebug("Eleventy:DevServer");
-const BYTES_RANGE_REGEXP = /^ *bytes=/
 
 const DEFAULT_OPTIONS = {
   port: 8080,
@@ -43,6 +42,7 @@ const DEFAULT_OPTIONS = {
   indexFileName: "index.html", // Allow custom index file name
   useCache: false,      // Use a cache for file contents
   headers: {},          // Set default response headers
+  serverThread: true,   // Run the HTTP server on a worker thread so requests stay fast during builds
   messageOnStart: ({ hosts, startupTime, version, options }) => {
     let hostsStr = " started";
     if(Array.isArray(hosts) && hosts.length > 0) {
@@ -79,54 +79,21 @@ const DEFAULT_OPTIONS = {
   },
 }
 
-// Common web file extensions and their content types
-const CONTENT_TYPES = {
-  '.avif': 'image/avif',
-  '.bmp': 'image/bmp',
-  '.br': 'application/x-brotli',
-  '.cjs': 'application/javascript',
-  '.css': 'text/css',
-  '.csv': 'text/csv',
-  '.eot': 'application/vnd.ms-fontobject',
-  '.eps': 'application/postscript',
-  '.gif': 'image/gif',
-  '.gz': 'application/gzip',
-  '.htm': 'text/html',
-  '.html': 'text/html',
-  '.ico': 'image/x-icon',
-  '.jpeg': 'image/jpeg',
-  '.jpg': 'image/jpeg',
-  '.js': 'application/javascript',
-  '.json': 'application/json',
-  '.m4v': 'video/mp4',
-  '.map': 'application/json',
-  '.md': 'text/markdown',
-  '.mjs': 'application/javascript',
-  '.mp3': 'audio/mpeg',
-  '.mp4': 'video/mp4',
-  '.ogg': 'audio/ogg',
-  '.otf': 'font/otf',
-  '.pdf': 'application/pdf',
-  '.png': 'image/png',
-  '.rss': 'application/rss+xml',
-  '.svg': 'image/svg+xml',
-  '.tar': 'application/x-tar',
-  '.tif': 'image/tiff',
-  '.tiff': 'image/tiff',
-  '.ttf': 'font/ttf',
-  '.txt': 'text/plain',
-  '.wasm': 'application/wasm',
-  '.wav': 'audio/wav',
-  '.webm': 'video/webm',
-  '.webmanifest': 'application/manifest+json',
-  '.webp': 'image/webp',
-  '.woff': 'font/woff',
-  '.woff2': 'font/woff2',
-  '.xml': 'application/xml',
-  '.yaml': 'application/yaml',
-  '.yml': 'application/yaml',
-  '.zip': 'application/zip',
-};
+// Option keys that are safe to structured-clone across to the server thread.
+const THREAD_TRANSFERABLE_OPTIONS = [
+  "reloadPort",
+  "liveReload",
+  "injectedScriptsFolder",
+  "portReassignmentRetryCount",
+  "https",
+  "domDiff",
+  "encoding",
+  "pathPrefix",
+  "aliases",
+  "indexFileName",
+  "useCache",
+  "headers",
+];
 
 const POLITE_WEBSOCKET_CLOSE_TIMEOUT = 50; // in ms
 
@@ -136,6 +103,14 @@ export default class EleventyDevServer {
   #serverState;
   #readyPromise;
   #readyResolve;
+  #portPromise;
+  #portResolve;
+  #staticFiles;
+  #worker;
+  #workerClosed;
+  #port;
+  #updateServer;
+  #threadClientCount = 0;
 
   static getServer(...args) {
     return new EleventyDevServer(...args);
@@ -152,15 +127,34 @@ export default class EleventyDevServer {
       throw new Error("Missing `dir` to serve.");
     }
     this.dir = dir;
+
+    this.#staticFiles = new StaticFiles(dir, this.options);
+
     this.getWatcher();
 
     this.#readyPromise = new Promise((resolve) => {
       this.#readyResolve = resolve;
-    })
+    });
+
+    this.#portPromise = new Promise((resolve) => {
+      this.#portResolve = resolve;
+    });
   }
 
   get logger() {
     return this.options.logger;
+  }
+
+  /**
+   * Whether the HTTP server runs on a dedicated worker thread.
+   * @returns {boolean}
+   */
+  get isThreaded() {
+    return this.options.serverThread !== false;
+  }
+
+  #hasUserRequestHandlers() {
+    return (this.options.middleware || []).length > 0;
   }
 
   normalizeOptions(options = {}) {
@@ -181,6 +175,8 @@ export default class EleventyDevServer {
     }
 
     this.options.pathPrefix = this.cleanupPathPrefix(this.options.pathPrefix);
+
+    this.#staticFiles?.setOptions(this.options);
   }
 
   get watcher() {
@@ -192,9 +188,9 @@ export default class EleventyDevServer {
     if(!this.options.chokidar) {
       this.#watcher = chokidar.watch(this.options.watch, Object.assign({
         ignoreInitial: true,
-  
+
         ignored: ["**/node_modules/**", ".git"],
-  
+
         // same values as Eleventy core
         awaitWriteFinish: {
           stabilityThreshold: 150,
@@ -251,325 +247,53 @@ export default class EleventyDevServer {
     return pathPrefix;
   }
 
-  // Allowed list of files that can be served from outside `dir`
+  /* Static file resolution and serving lives in `server/staticFiles.js` so that it can
+   * run either here or on the server thread. These stay as delegates for API compatibility. */
+
   setAliases(aliases) {
-    if(aliases) {
-      this.passthroughAliases = aliases;
-      debug( "Setting aliases (emulated passthrough copy) %O", aliases );
-    }
+    this.#staticFiles.setAliases(aliases);
+    this.#worker?.postMessage({ type: "aliases", aliases });
   }
 
   matchPassthroughAlias(url) {
-    let aliases = Object.assign({}, this.options.aliases, this.passthroughAliases);
-    for(let targetUrl in aliases) {
-      if(!targetUrl) {
-        continue;
-      }
-
-      let file = aliases[targetUrl];
-      if(url.startsWith(targetUrl)) {
-        let inputDirectoryPath = file + url.slice(targetUrl.length);
-
-        // e.g. addPassthroughCopy("img/") but <img src="/img/built/IdthKOzqFA-350.png">
-        // generated by the image plugin (written to the output folder)
-        // If they do not exist in the input directory, this will fallback to the output directory.
-        if(fs.existsSync(inputDirectoryPath)) {
-          return inputDirectoryPath;
-        }
-      }
-    }
-    return false;
+    return this.#staticFiles.matchPassthroughAlias(url);
   }
 
   isFileInDirectory(dir, file) {
-    let absoluteDir = TemplatePath.absolutePath(dir);
-    let absoluteFile = TemplatePath.absolutePath(file);
-    return absoluteFile.startsWith(absoluteDir);
+    return this.#staticFiles.isFileInDirectory(dir, file);
   }
 
   getOutputDirFilePath(filepath, filename = "") {
-    let computedPath;
-    if(filename === ".html") {
-      // avoid trailing slash for filepath/.html requests
-      let prefix = path.join(this.dir, filepath);
-      if(prefix.endsWith(path.sep)) {
-        prefix = prefix.substring(0, prefix.length - path.sep.length);
-      }
-      computedPath = prefix + filename;
-    } else {
-      computedPath = path.join(this.dir, filepath, filename);
-    }
-
-    computedPath = decodeURIComponent(computedPath);
-
-    if(!filename) { // is a direct URL request (not an implicit .html or index.html add)
-      let alias = this.matchPassthroughAlias(filepath);
-
-      if(alias) {
-        if(!this.isFileInDirectory(path.resolve("."), alias)) {
-          throw new Error("Invalid path");
-        }
-
-        return alias;
-      }
-    }
-
-    // Check that the file is in the output path (error if folks try use `..` in the filepath)
-    if(!this.isFileInDirectory(this.dir, computedPath)) {
-      throw new Error("Invalid path");
-    }
-
-    return computedPath;
+    return this.#staticFiles.getOutputDirFilePath(filepath, filename);
   }
 
   isOutputFilePathExists(rawPath) {
-    return fs.existsSync(rawPath) && !TemplatePath.isDirectorySync(rawPath);
+    return this.#staticFiles.isOutputFilePathExists(rawPath);
   }
 
-  /* Use conventions documented here https://www.zachleat.com/web/trailing-slash/
-   * resource.html exists:
-   *    /resource matches
-   *    /resource/ redirects to /resource
-   * resource/index.html exists:
-   *    /resource redirects to /resource/
-   *    /resource/ matches
-   * both resource.html and resource/index.html exists:
-   *    /resource matches /resource.html
-   *    /resource/ matches /resource/index.html
-   */
   mapUrlToFilePath(url) {
-    // Note: `localhost` is not important here, any host would work
-    let u = new URL(url, "http://localhost/");
-    url = u.pathname;
-
-    // Remove PathPrefix from start of URL
-    if (this.options.pathPrefix !== "/") {
-      // Requests to root should redirect to new pathPrefix
-      if(url === "/") {
-        return {
-          statusCode: 302,
-          url: this.options.pathPrefix,
-        }
-      }
-
-      // Requests to anything outside of root should fail with 404
-      if (!url.startsWith(this.options.pathPrefix)) {
-        return {
-          statusCode: 404,
-        };
-      }
-
-      url = url.slice(this.options.pathPrefix.length - 1);
-    }
-
-    let rawPath = this.getOutputDirFilePath(url);
-    if (this.isOutputFilePathExists(rawPath)) {
-      return {
-        statusCode: 200,
-        filepath: rawPath,
-      };
-    }
-
-    let indexHtmlPath = this.getOutputDirFilePath(url, this.options.indexFileName);
-    let indexHtmlExists = fs.existsSync(indexHtmlPath);
-
-    let htmlPath = this.getOutputDirFilePath(url, ".html");
-    let htmlExists = fs.existsSync(htmlPath);
-
-    // /resource/ => /resource/index.html
-    if (indexHtmlExists && url.endsWith("/")) {
-      return {
-        statusCode: 200,
-        filepath: indexHtmlPath,
-      };
-    }
-    // /resource => resource.html
-    if (htmlExists && !url.endsWith("/")) {
-      return {
-        statusCode: 200,
-        filepath: htmlPath,
-      };
-    }
-
-    // /resource => redirect to /resource/
-    if (indexHtmlExists && !url.endsWith("/")) {
-      return {
-        statusCode: 301,
-        url: u.pathname + "/",
-      };
-    }
-
-    // /resource/ => redirect to /resource
-    if (htmlExists && url.endsWith("/")) {
-      return {
-        statusCode: 301,
-        url: u.pathname.substring(0, u.pathname.length - 1),
-      };
-    }
-
-    return {
-      statusCode: 404,
-    };
-  }
-
-  #readFile(filepath) {
-    if(this.options.useCache && this.fileCache[filepath]) {
-      return this.fileCache[filepath];
-    }
-
-    let contents = fs.readFileSync(filepath, {
-      encoding: this.options.encoding,
-    });
-
-    if(this.options.useCache) {
-      this.fileCache[filepath] = contents;
-    }
-
-    return contents;
-  }
-
-  /**
-   * Used for the reload client only
-   * @returns {String}
-   */
-  #getFileContents(localpath, rootDir) {
-    let filepath;
-    let searchLocations = [];
-
-    if(rootDir) {
-      searchLocations.push(TemplatePath.absolutePath(rootDir, localpath));
-    }
-
-    // fallbacks for file:../ installations
-    searchLocations.push(TemplatePath.absolutePath(__dirname, localpath));
-
-    for(let loc of searchLocations) {
-      if(fs.existsSync(loc)) {
-        filepath = loc;
-        break;
-      }
-    }
-
-    return this.#readFile(filepath);
+    return this.#staticFiles.mapUrlToFilePath(url);
   }
 
   augmentContentWithNotifier(content, inlineContents = false, options = {}) {
-    let { integrityHash, scriptContents } = options;
-    if(!scriptContents) {
-      scriptContents = this.#getFileContents("./client/reload-client.js");
-    }
-    if(!integrityHash) {
-      integrityHash = this.#sri(scriptContents);
-    }
-
-    let searchParams = new URLSearchParams();
-    if(this.options.reloadPort) {
-      searchParams.set("reloadPort", this.options.reloadPort);
-    }
-
-    let searchParamsStr = searchParams.size > 0 ? `?${searchParams.toString()}` : "";
-
-    // This isn't super necessary because it's a local file, but it's included anyway
-    let script = `<script type="module" integrity="${integrityHash}"${inlineContents ? `>${scriptContents}` : ` src="/${this.options.injectedScriptsFolder}/reload-client.js${searchParamsStr}">`}</script>`;
-
-    if (content.includes("</head>")) {
-      return content.replace("</head>", `${script}</head>`);
-    }
-
-    // If the HTML document contains an importmap, insert the module script after the importmap element
-    let importMapRegEx = /<script type=\\?importmap\\?[^>]*>(\n|.)*?<\/script>/gmi;
-    let importMapMatch = content.match(importMapRegEx)?.[0];
-
-    if (importMapMatch) {
-      return content.replace(importMapMatch, `${importMapMatch}${script}`);
-    }
-
-    // <title> is the only *required* element in an HTML document
-    if (content.includes("</title>")) {
-      return content.replace("</title>", `</title>${script}`);
-    }
-
-    // If you've reached this section, your HTML is invalid!
-    // We want to be super forgiving here, because folks might be in-progress editing the document!
-    if (content.includes("</body>")) {
-      return content.replace("</body>", `${script}</body>`);
-    }
-    if (content.includes("</html>")) {
-      return content.replace("</html>", `${script}</html>`);
-    }
-    if (content.includes("<!doctype html>")) {
-      return content.replace("<!doctype html>", `<!doctype html>${script}`);
-    }
-
-    // Notably, works without content at all!!
-    return (content || "") + script;
+    return this.#staticFiles.augmentContentWithNotifier(content, inlineContents, options);
   }
 
-  /**
-   * Infer a content-type from a filepath.
-   * @returns {string|undefined}
-   */
   getFileContentType(filepath, res) {
-    let contentType = res.getHeader("Content-Type");
-
-    // Content-Type might be already set via middleware
-    if (contentType) {
-      return contentType;
-    }
-
-    const ext = path.extname(filepath).toLowerCase();
-    
-    // First check our common types
-    if (CONTENT_TYPES[ext]) {
-      contentType = CONTENT_TYPES[ext];
-    } else {
-      // Fallback to mime package for other types
-      contentType = mime.getType(filepath);
-    }
-
-    if (!contentType) {
-      return;
-    }
-
-    // Add charset for text-based content types
-    const textTypes = [
-      'text/',
-      'text/html',
-      'application/javascript',
-      'application/json',
-      'application/xml',
-      'application/yaml',
-      'application/x-www-form-urlencoded'
-    ];
-
-    // Check if the content type matches any text-based MIME types to determine if charset should be added
-    if (textTypes.some(type => contentType.startsWith(type))) {
-      contentType = `${contentType}; charset=${this.options.encoding}`;
-    }
-
-    return contentType;
+    return this.#staticFiles.getFileContentType(filepath, res);
   }
 
   renderFile(filepath, res) {
-    let contents = fs.readFileSync(filepath);
-    let contentType = this.getFileContentType(filepath, res);
+    return this.#staticFiles.renderFile(filepath, res);
+  }
 
-    for(const [key, value] of Object.entries(this.options.headers)){
-      res.setHeader(key, value);
-    }
+  getServerPath(pathname) {
+    return this.#staticFiles.getServerPath(pathname);
+  }
 
-    if (!contentType) {
-      return res.end(contents);
-    }
-
-    res.setHeader("Content-Type", contentType);
-
-    if (contentType.startsWith("text/html")) {
-      // the string is important here, wrapResponse expects strings internally for HTML content (for now)
-      return res.end(contents.toString());
-    }
-
-    return res.end(contents);
+  // This runs at the end of the middleware chain
+  eleventyProjectMiddleware(req, res) {
+    return this.#staticFiles.serve(req, res);
   }
 
   async eleventyDevServerMiddleware(req, res, next) {
@@ -639,176 +363,27 @@ export default class EleventyDevServer {
     if(req.url.startsWith(`/${this.options.injectedScriptsFolder}/reload-client.js`)) {
       if(this.options.liveReload) {
         res.setHeader("Content-Type", mime.getType("js"));
-        return res.end(this.#getFileContents("./client/reload-client.js"));
+        return res.end(this.#staticFiles.getReloadClientContents());
       }
     } else if(req.url === `/${this.options.injectedScriptsFolder}/morphdom.js`) {
       if(this.options.domDiff) {
         res.setHeader("Content-Type", mime.getType("js"));
-        let morphdomEsmPath = require.resolve("morphdom").replace("morphdom.js", "morphdom-esm.js");
-        return res.end(this.#readFile(morphdomEsmPath));
+        return res.end(this.#staticFiles.readFile(this.#staticFiles.getMorphdomPath()));
       }
     }
 
     next();
   }
 
-  /**
-   * @param {String} data
-   */
-  #sri(data) {
-    return `sha512-${crypto.createHash("sha512").update(data).digest("base64")}`
-  }
-
-  // This runs at the end of the middleware chain
-  /**
-   * @param {String} type
-   * @param {number} size
-   * @param {{start: number, end: number} | undefined} range
-   */
-  #contentRange(type, size, range) {
-    return type + ' ' + (range ? range.start + '-' + range.end : '*') + '/' + size
-  }
-
-  /**
-   * @param {import('node:http').IncomingMessage} req
-   * @param {import('node:http').OutgoingMessage} res
-   * This runs at the end of the middleware chain
-   */
-  eleventyProjectMiddleware(req, res) {
-    // Known issue with `finalhandler` and HTTP/2:
-    // UnsupportedWarning: Status message is not supported by HTTP/2 (RFC7540 8.1.2.4)
-    // https://github.com/pillarjs/finalhandler/pull/34
-
-    let lastNext = finalhandler(req, res, {
-      onerror: (e) => {
-        if (e.statusCode === 404) {
-          let localPath = TemplatePath.stripLeadingSubPath(
-            e.path,
-            TemplatePath.absolutePath(this.dir)
-          );
-          this.logger.error(
-            `HTTP ${e.statusCode}: Template not found in output directory (${this.dir}): ${localPath}`
-          );
-        } else {
-          this.logger.error(`HTTP ${e.statusCode}: ${e.message}`);
-        }
-      },
-    });
-
-    // middleware (maybe a serverless request) already set a body upstream, skip this part
-    if(!res._shouldForceEnd) {
-      let match = this.mapUrlToFilePath(req.url);
-      debug( req.url, match );
-
-      if (match) {
-        if (match.statusCode === 200 && match.filepath) {
-          // Content-Range request, probably Safari trying to stream video
-          // If the client includes an If-Range header,
-          // serve them the whole thing. We don't include
-          // last-modified or etags headers, so these
-          // requests are invalid.
-          if (BYTES_RANGE_REGEXP.test(req.headers.range) && !req.headers['if-range'])  {
-            return fs.stat(match.filepath, (err, stat) => {
-              if (err) {
-                res.statusCode = 404;
-                res.end('File not found');
-                return;
-              }
-
-              let contentType = this.getFileContentType(match.filepath, res);
-              let len = stat.size;
-
-              const ranges = parseRange(len, req.headers.range, {
-                combine: true
-              })
-
-              // Tell clients that they can send ranges.
-              res.setHeader('Accept-Ranges', 'bytes');
-              res.setHeader('Cache-Control', 'public, max-age=0');
-              if (contentType) {
-                res.setHeader("Content-Type", contentType);
-              }
-
-              // unsatisfiable
-              if (ranges === -1) {
-                // 416 Requested Range Not Satisfiable
-                res.statusCode = 416;
-                res.setHeader('Content-Range', this.#contentRange('bytes', len))
-                return res.end();
-              } else if (ranges !== -2 && ranges.length === 1) {
-              // valid (syntactically invalid/multiple ranges are treated as a regular response)
-                // Content-Range
-                res.statusCode = 206;
-                res.setHeader('Content-Range', this.#contentRange('bytes', len, ranges[0]))
-
-                // adjust for requested range
-                let start = ranges[0].start
-                len = ranges[0].end - ranges[0].start + 1
-                let end = ranges[0].end
-                res.setHeader('Content-Length', len)
-                if (req.method === 'HEAD') {
-                  res.end()
-                  return
-                }
-                const stream = fs.createReadStream(match.filepath, {
-                  start, end
-                });
-                stream.pipe(res);
-                const cleanup = () => {
-                  stream.destroy();
-                  res.destroy();
-                }
-                res.on('close', cleanup);
-                stream.on('error', cleanup);
-                stream.on('end', cleanup);
-              } else {
-                // Just send multi-range requests as full files.
-                return this.renderFile(match.filepath, res);
-              }
-            });
-          }
-          return this.renderFile(match.filepath, res);
-        }
-
-        // Redirects, usually for trailing slash to .html stuff
-        if (match.url) {
-          res.statusCode = match.statusCode;
-          res.setHeader("Location", match.url);
-          return res.end();
-        }
-
-        let raw404Path = this.getOutputDirFilePath("404.html");
-        if(match.statusCode === 404 && this.isOutputFilePathExists(raw404Path)) {
-          res.statusCode = match.statusCode;
-          res.isCustomErrorPage = true;
-          return this.renderFile(raw404Path, res);
-        }
-      }
-    }
-
-    if(res.body && !res.bodyUsed) {
-      if(res._shouldForceEnd) {
-        res.end();
-      } else {
-        let err = new Error("A response was never written to the stream. Are you missing a server middleware with `res.end()`?");
-        err.statusCode = 500;
-        lastNext(err);
-        return;
-      }
-    }
-
-    lastNext();
-  }
-
-  async onRequestHandler (req, res) {
-    res = wrapResponse(res, content => {
-
+  // Injects the live reload client into HTML responses.
+  #transformHtml(req, res) {
+    return (content) => {
       // check to see if this is a client fetch and not a navigation
       let isXHR = req.headers["sec-fetch-mode"] && req.headers["sec-fetch-mode"] != "navigate";
 
       if(this.options.liveReload !== false && !isXHR) {
-        let scriptContents = this.#getFileContents("./client/reload-client.js");
-        let integrityHash = this.#sri(scriptContents);
+        let scriptContents = this.#staticFiles.getReloadClientContents();
+        let integrityHash = this.#staticFiles.sri(scriptContents);
 
         // Bare (not-custom) finalhandler error pages have a Content-Security-Policy `default-src 'none'` that
         // prevents the client script from executing, so we override it
@@ -822,15 +397,21 @@ export default class EleventyDevServer {
       }
 
       return content;
-    });
+    };
+  }
 
+  /**
+   * Builds and runs the middleware chain, ending with `terminal`.
+   * @param {Function} terminal runs last, after all user middleware
+   */
+  async #runMiddlewareChain(req, res, terminal) {
     let middlewares = this.options.middleware || [];
     middlewares = middlewares.slice();
 
     // TODO because this runs at the very end of the middleware chain,
     // if we move the static stuff up in the order we could use middleware to modify
     // the static content in middleware!
-    middlewares.push(this.eleventyProjectMiddleware);
+    middlewares.push(terminal);
     middlewares.reverse();
 
     // Runs very first in the middleware chain
@@ -855,6 +436,180 @@ export default class EleventyDevServer {
     let [first] = bound;
     await first();
   }
+
+  async onRequestHandler (req, res) {
+    res = wrapResponse(res, this.#transformHtml(req, res));
+
+    await this.#runMiddlewareChain(req, res, this.eleventyProjectMiddleware);
+  }
+
+  /* ---------------------------------------------------------------------- *
+   * Server thread
+   * ---------------------------------------------------------------------- */
+
+  #startWorker(port) {
+    let options = {};
+    for(let key of THREAD_TRANSFERABLE_OPTIONS) {
+      options[key] = this.options[key];
+    }
+
+    this.#worker = new Worker(new URL("./server/serverThread.js", import.meta.url), {
+      workerData: {
+        dir: this.dir,
+        options,
+        onRequestPatterns: Object.keys(this.options.onRequest || {}),
+        hasMiddleware: this.#hasUserRequestHandlers(),
+        // Eleventy may call setAliases() before serve()
+        passthroughAliases: this.#staticFiles.passthroughAliases,
+        port,
+      },
+    });
+
+    this.#worker.on("message", (msg) => this.#onWorkerMessage(msg));
+
+    this.#worker.on("error", (err) => {
+      this.logger.error(`Server error: ${err.message}`);
+    });
+
+    this.start = Date.now();
+  }
+
+  #onWorkerMessage(msg) {
+    if(msg.type === "listening") {
+      this.#port = msg.port;
+      this._serverProtocol = msg.protocol;
+      this.#portResolve(msg.port);
+      this.logStartMessage();
+      this.#readyResolve();
+    } else if(msg.type === "proxyRequest") {
+      this.#handleProxyRequest(msg);
+    } else if(msg.type === "clientMessage") {
+      if(typeof this.options.onClientMessage === "function") {
+        this.options.onClientMessage(msg.parsed);
+      }
+    } else if(msg.type === "clientCount") {
+      this.#threadClientCount = msg.size;
+    } else if(msg.type === "log") {
+      this.logger[msg.level]?.(...msg.args);
+    } else if(msg.type === "serverError") {
+      this._serverErrorHandler({ code: msg.code, port: msg.port, message: msg.message });
+    } else if(msg.type === "fatal") {
+      this.logger.error(msg.message);
+    } else if(msg.type === "closed") {
+      this.#workerClosed?.();
+    }
+  }
+
+  /**
+   * A response object that buffers everything written to it, so that a request
+   * proxied from the server thread can run the normal middleware chain here.
+   */
+  #createProxyResponse(req) {
+    let res = new http.ServerResponse(req);
+    let chunks = [];
+
+    res.write = function(data, encoding) {
+      if(data !== undefined && data !== null) {
+        chunks.push(Buffer.isBuffer(data) ? data : Buffer.from(data, typeof encoding === "string" ? encoding : "utf8"));
+      }
+      return true;
+    };
+
+    res.writeHead = function(statusCode, ...args) {
+      this.statusCode = statusCode;
+      let headers = args[args.length - 1];
+      if(headers && typeof headers === "object") {
+        for(let key of Object.keys(headers)) {
+          this.setHeader(key, headers[key]);
+        }
+      }
+      return this;
+    };
+
+    res.end = function(data, encoding, callback) {
+      if(typeof data === "function") {
+        callback = data;
+        data = undefined;
+      } else if(typeof encoding === "function") {
+        callback = encoding;
+        encoding = undefined;
+      }
+      if(data !== undefined && data !== null) {
+        this.write(data, encoding);
+      }
+      if(typeof callback === "function") {
+        callback();
+      }
+      this.emit("finish");
+      return this;
+    };
+
+    res.getProxyBody = () => Buffer.concat(chunks);
+
+    return res;
+  }
+
+  async #handleProxyRequest(msg) {
+    let reply = { type: "proxyResponse", id: msg.id };
+
+    try {
+      let req = new http.IncomingMessage(null);
+      req.method = msg.method;
+      req.url = msg.url;
+      req.headers = msg.headers || {};
+      req.httpVersion = "1.1";
+      req.httpVersionMajor = 1;
+      req.httpVersionMinor = 1;
+
+      if(msg.body) {
+        req.push(Buffer.from(msg.body));
+      }
+      req.push(null);
+
+      let res = this.#createProxyResponse(req);
+      res = wrapResponse(res, this.#transformHtml(req, res));
+
+      // Middleware in the chain call `next()` without awaiting it, so the promise
+      // returned by the chain can settle before an async middleware has written
+      // anything. Wait on the response itself instead.
+      let fellThrough = false;
+      let settled = new Promise((resolve, reject) => {
+        res.once("finish", resolve);
+
+        // Terminal handler: nothing here claimed the request, so the server thread
+        // serves the file itself (keeping file I/O off this thread).
+        this.#runMiddlewareChain(req, res, function fallthrough() {
+          fellThrough = true;
+          resolve();
+        }).catch(reject);
+      });
+
+      await settled;
+
+      if(!fellThrough && res.bodyUsed) {
+        reply.ended = true;
+        reply.statusCode = res.statusCode;
+        reply.headers = res.getHeaders();
+        reply.body = res.getProxyBody();
+      } else {
+        reply.fallthrough = true;
+        reply.statusCode = res.statusCode;
+        reply.headers = res.getHeaders();
+        // A middleware may have set a body without ending; hand it along.
+        reply.body = res.body;
+        reply.shouldForceEnd = res._shouldForceEnd;
+      }
+    } catch(e) {
+      this.logger.error(`Server error: ${e.message}`);
+      reply.error = e.message;
+    }
+
+    this.#worker?.postMessage(reply);
+  }
+
+  /* ---------------------------------------------------------------------- *
+   * Single-threaded server (used when `serverThread: false`)
+   * ---------------------------------------------------------------------- */
 
   getHosts() {
     let hosts = new Set();
@@ -915,8 +670,10 @@ export default class EleventyDevServer {
     });
 
     this._server.on("listening", (e) => {
+      this.#port = this._server.address().port;
       this.setupReloadNotifier();
       this.logStartMessage();
+      this.#portResolve(this.#port);
       this.#readyResolve();
     });
 
@@ -933,47 +690,30 @@ export default class EleventyDevServer {
     });
   }
 
-  getServerPath(pathname) {
-    // duplicate slashes
-    if(this.options.pathPrefix.endsWith("/") && pathname.startsWith("/")) {
-      pathname = pathname.slice(1);
-    }
-    return `${this.options.pathPrefix}${pathname}`;
-  }
-
   getServerUrlRaw(host, pathname = "", isRaw = true) {
-    if(!this._server || !this._serverProtocol) {
+    if(!this.#port || !this._serverProtocol) {
       throw new Error("Access to server url not yet available.");
     }
 
-    let address = this._server.address();
-    if(!address?.port) {
-      throw new Error("Access to server port not yet available.");
-    }
-
-    return `${this._serverProtocol}//${host}:${address.port}${isRaw ? pathname : this.getServerPath(pathname)}`;
+    return `${this._serverProtocol}//${host}:${this.#port}${isRaw ? pathname : this.getServerPath(pathname)}`;
   }
 
   getServerUrl(host, pathname = "") {
     return this.getServerUrlRaw(host, pathname, false);
   }
 
-  _portPromise = null;
-
   async getPort() {
-    if (this._portPromise) return this._portPromise;
-    return this._portPromise = new Promise(resolve => {
-      this.server.on("listening", (e) => {
-        let { port } = this._server.address();
-        resolve(port);
-      });
-    })
+    return this.#portPromise;
   }
 
   serve(port) {
     this.getWatcher();
 
-    this._serverListen(port);
+    if(this.isThreaded) {
+      this.#startWorker(port);
+    } else {
+      this._serverListen(port);
+    }
   }
 
   _serverErrorHandler(err) {
@@ -1021,17 +761,30 @@ export default class EleventyDevServer {
       this._serverErrorHandler(err);
     });
 
-    this.updateServer = updateServer;
+    this.#updateServer = updateServer;
+  }
+
+  get updateServer() {
+    if(this.isThreaded) {
+      // The websocket server lives on the server thread; expose the client count only.
+      return { clients: { size: this.#threadClientCount } };
+    }
+    return this.#updateServer;
   }
 
   // Broadcasts to all open browser windows
   sendUpdateNotification(obj, options = {}) {
-    if(!this.updateServer?.clients) {
+    if(this.isThreaded) {
+      this.#worker?.postMessage({ type: "broadcast", payload: obj });
+      return;
+    }
+
+    if(!this.#updateServer?.clients) {
       return;
     }
 
     let { include } = options;
-    for(let client of this.updateServer.clients) {
+    for(let client of this.#updateServer.clients) {
       if ((!include || include === client) && client.readyState === WebSocket.OPEN) {
         client.send(JSON.stringify(obj));
       }
@@ -1056,6 +809,30 @@ export default class EleventyDevServer {
     });
   }
 
+  async #closeWorker() {
+    let worker = this.#worker;
+    if(!worker) {
+      return;
+    }
+    this.#worker = undefined;
+
+    await new Promise((resolve) => {
+      let settled = false;
+      let done = () => {
+        if(settled) return;
+        settled = true;
+        resolve();
+      };
+      this.#workerClosed = done;
+      // Don't hang shutdown on a wedged socket.
+      let timer = setTimeout(done, 500);
+      timer.unref?.();
+      worker.postMessage({ type: "close" });
+    });
+
+    await worker.terminate();
+  }
+
   async close() {
     // Prevent multiple invocations.
     if (this.#serverClosing) {
@@ -1069,9 +846,14 @@ export default class EleventyDevServer {
     });
 
     let promises = []
-    if(this.updateServer) {
+
+    if(this.#worker) {
+      promises.push(this.#closeWorker());
+    }
+
+    if(this.#updateServer) {
       // Close all existing WS connections.
-      this.updateServer?.clients.forEach(socket => {
+      this.#updateServer?.clients.forEach(socket => {
         socket.close();
 
         if("terminate" in socket) {
@@ -1079,8 +861,8 @@ export default class EleventyDevServer {
           setTimeout(() => socket.terminate(), POLITE_WEBSOCKET_CLOSE_TIMEOUT);
         }
       });
-      
-      promises.push(this._closeServer(this.updateServer));
+
+      promises.push(this._closeServer(this.#updateServer));
     }
 
     if(this._server?.listening) {
