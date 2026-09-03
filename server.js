@@ -136,6 +136,10 @@ export default class EleventyDevServer {
   #serverState;
   #readyPromise;
   #readyResolve;
+  // `buildId` names the current content: new per process, bumped per reload. Clients compare
+  // it on reconnect to see if they missed a build—see client/reload-client.js
+  #serverInstanceId = crypto.randomUUID();
+  #buildCount = 0;
 
   static getServer(...args) {
     return new EleventyDevServer(...args);
@@ -161,6 +165,10 @@ export default class EleventyDevServer {
 
   get logger() {
     return this.options.logger;
+  }
+
+  get buildId() {
+    return `${this.#serverInstanceId}:${this.#buildCount}`;
   }
 
   normalizeOptions(options = {}) {
@@ -999,6 +1007,7 @@ export default class EleventyDevServer {
       this.sendUpdateNotification({
         type: "eleventy.status",
         status: "connected",
+        buildId: this.buildId,
       }, { include: ws });
 
       ws.on("message", (data) => {
@@ -1223,11 +1232,14 @@ export default class EleventyDevServer {
         });
     }
 
+    this.#buildCount++;
+
     this.sendUpdateNotification({
       type: "eleventy.reload",
       subtype,
       files,
       build,
+      buildId: this.buildId,
     });
   }
 }
