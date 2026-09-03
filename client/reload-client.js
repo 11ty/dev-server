@@ -114,6 +114,7 @@ class ReloadClient {
   #socket;
   #ack = [];
   #ready = false; // swap to Promise.withResolvers
+  #buildId; // specific to one single core build run
 
   static RELOAD_ENABLED = true;
   static PORT_PARAM = "reloadPort";
@@ -266,6 +267,13 @@ class ReloadClient {
     this.reconnectInterval = ReloadClient.RECONNECT_INTERVAL;
     this.connectionMessageShown = false;
     this.reconnectEventCallback = this.reconnect.bind(this);
+
+    // bfcache restores resume with a closed socket: reconnect now, don’t wait on the timer.
+    window.addEventListener("pageshow", (event) => {
+      if(event.persisted && this.#socket?.readyState !== WebSocket.OPEN) {
+        this.reconnect(event);
+      }
+    });
   }
 
   get socket() {
@@ -312,12 +320,18 @@ class ReloadClient {
           let e = JSON.parse(data.error);
           Util.error(`Build error: ${e.message}`, e);
         } else if (type === "eleventy.status") {
-          // Full page reload on initial reconnect
+          // A reconnect may have missed builds, but usually hasn’t—only reload if the
+          // server moved on. No `buildId` (older server) reloads unconditionally, as before.
           if (data.status === "connected" && options.mode === "reconnect") {
-            ReloadClient.reload({ via: "reconnect"});
+            if(!this.#buildId || !data.buildId || this.#buildId !== data.buildId) {
+              ReloadClient.reload({ via: "reconnect"});
+            } else {
+              Util.log(`Reconnected without page reload.`);
+            }
           }
 
           if(data.status === "connected") {
+            this.#buildId = data.buildId;
             // With multiple windows, only show one connection message
             if(!this.isConnected) {
               Util.log(Util.capitalize(data.status));
@@ -372,7 +386,9 @@ class ReloadClient {
     this.init({ mode: "reconnect" });
   }
 
-  async onreload({ subtype, files, build }) {
+  async onreload({ subtype, files, build, buildId }) {
+    this.#buildId = buildId;
+
     if(!ReloadClient.reloadTypes[subtype]) {
       subtype = "default";
     }

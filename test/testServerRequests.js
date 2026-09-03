@@ -489,4 +489,41 @@ test("Web Socket request", async (t) => {
   await server.close();  
 });
 
+test("Web Socket buildId, sent on connect and bumped by each reload", async (t) => {
+  let server = new EleventyDevServer("test-server", "./test/stubs/", getOptions());
+  server.serve(8201);
+
+  let port = await server.getPort();
+
+  let socket = new WebSocket(`ws://localhost:${port}`);
+  let nextMessage = () => {
+    let { promise, resolve } = withResolvers();
+    socket.addEventListener("message", (event) => resolve(JSON.parse(event.data)), { once: true });
+    return promise;
+  };
+
+  let connected = await nextMessage();
+  t.is(connected.status, "connected");
+  // a client reconnecting with this id missed nothing
+  t.is(connected.buildId, server.buildId);
+
+  let reloadedPromise = nextMessage();
+  server.reload({ subtype: "css", files: [] });
+  let reloaded = await reloadedPromise;
+
+  t.is(reloaded.type, "eleventy.reload");
+  t.is(reloaded.buildId, server.buildId);
+  t.not(reloaded.buildId, connected.buildId);
+
+  await server.close();
+});
+
+test("Web Socket buildId is unique per server instance", async (t) => {
+  let first = new EleventyDevServer("test-server", "./test/stubs/", getOptions());
+  let second = new EleventyDevServer("test-server", "./test/stubs/", getOptions());
+
+  // a restart never matches, so clients do reload
+  t.not(first.buildId, second.buildId);
+});
+
 // TODO setup websocket server *without* web server
