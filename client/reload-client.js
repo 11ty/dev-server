@@ -125,6 +125,25 @@ class ReloadClient {
   static isCustomElement(node) {
     return customElements.get(node.tagName.toLowerCase())
   }
+  
+  static isViteNode(node) {
+    if (!node || node.nodeType !== 1) {
+      return false;
+    }
+
+    return (
+      node.matches('script[src*="/@vite/client"]') ||
+      node.hasAttribute("data-vite-dev-id")
+    );
+  }
+
+  static isDomdiffIgnored(node) {
+    if (!node || node.nodeType !== 1) {
+      return false;
+    }
+
+    return node.hasAttribute("data-domdiff-ignore");
+  }
 
   setReloadEnabled(enabled) {
     ReloadClient.RELOAD_ENABLED = Boolean(enabled);
@@ -174,7 +193,7 @@ class ReloadClient {
         return url === document.location.pathname && (files || []).includes(inputPath);
       });
 
-      // Not eligible for domDiff
+      // Not eligible for domdiff
       if(domdiffTemplates.length === 0) {
         this.reload({ via: "ineligible domdiff"});
         return;
@@ -196,6 +215,10 @@ class ReloadClient {
           morphdom(document.documentElement, content, {
             childrenOnly: false,
             onBeforeNodeDiscarded: function(node) {
+              if (ReloadClient.isViteNode(node)) {
+                return false;
+              }
+
               // Don’t discard stylesheets inserted via script! (e.g. Web Awesome)
               // TODO maybe more defensive?
               if((node?.tagName || "").toLowerCase() === "link") {
@@ -203,6 +226,14 @@ class ReloadClient {
               }
             },
             onBeforeElUpdated: (fromEl, toEl) => {
+              if (ReloadClient.isViteNode(fromEl)) {
+                return false;
+              }
+
+              if (ReloadClient.isDomdiffIgnored(fromEl)) {
+                return false;
+              }
+
               if(fromEl.hasAttribute("inert")) {
                 return false;
               }
@@ -243,6 +274,14 @@ class ReloadClient {
               }
             },
             onNodeAdded: function (node) {
+              if (ReloadClient.isViteNode(node)) {
+                return;
+              }
+
+              if (ReloadClient.isDomdiffIgnored(node)) {
+                return;
+              }
+
               if (node.nodeName === 'SCRIPT') {
                 ReloadClient.reload({ via: "<script> added"});
               }
