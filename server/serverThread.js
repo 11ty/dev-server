@@ -30,9 +30,11 @@ class ServerThread {
   #proxyId = 0;
   #portRetryCount = 0;
   #closing = false;
+  #buildId;
 
-  constructor({ dir, options, onRequestPatterns, hasMiddleware, passthroughAliases, port }) {
+  constructor({ dir, options, onRequestPatterns, hasMiddleware, passthroughAliases, port, buildId }) {
     this.#options = options;
+    this.#buildId = buildId;
     this.hasMiddleware = hasMiddleware;
     this.startPort = port;
 
@@ -269,6 +271,7 @@ class ServerThread {
       this.broadcast({
         type: "eleventy.status",
         status: "connected",
+        buildId: this.#buildId,
       }, ws);
 
       parentPort.postMessage({ type: "clientCount", size: updateServer.clients.size });
@@ -349,6 +352,10 @@ class ServerThread {
         resolve(msg);
       }
     } else if(msg.type === "broadcast") {
+      // Reload payloads carry the new `buildId` for future connection messages
+      if(msg.payload.buildId) {
+        this.#buildId = msg.payload.buildId;
+      }
       this.broadcast(msg.payload);
     } else if(msg.type === "aliases") {
       this.#staticFiles.setAliases(msg.aliases);
