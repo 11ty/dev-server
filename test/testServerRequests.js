@@ -44,9 +44,7 @@ async function makeRequestTo(t, server, path, extras = {}) {
         t.true( true );
         resolve(rawData);
       });
-    }).on('error', (e) => {
-      console.error(`Got error: ${e.message}`);
-    });
+    }).on('error', reject);
   })
 }
 
@@ -71,9 +69,7 @@ async function fetchHeadersForRequest(t, server, path, extras) {
       let headers = res.headers;
       resolve(headers);
 
-    }).on('error', (e) => {
-      console.error(`Got error: ${e.message}`);
-    });
+    }).on('error', reject);
   })
 }
 
@@ -427,7 +423,7 @@ test("Default response headers cannot overwrite content-type", async (t) => {
   server.serve(8100);
 
   let data = await fetchHeadersForRequest(t, server, "/index.html");
-  t.false(data["Content-Type"] === "text/plain");
+  t.true(data["content-type"].startsWith("text/html"));
 
   await server.close();
 });
