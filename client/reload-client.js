@@ -121,6 +121,12 @@ class ReloadClient {
   static CACHE_BUST_PARAM = "_bust";
   static TAG_NAME = "reload-client";
   static RECONNECT_INTERVAL = 2000; // ms
+  static EVENT_PREFIXES = ["eleventy.", "buildawesome."];
+
+  static getEventName(type = "") {
+    let prefix = ReloadClient.EVENT_PREFIXES.find(prefix => type.startsWith(prefix));
+    return prefix ? type.slice(prefix.length) : undefined;
+  }
 
   static isCustomElement(node) {
     return customElements.get(node.tagName.toLowerCase())
@@ -308,18 +314,18 @@ class ReloadClient {
         let data = JSON.parse(event.data);
         // Util.log( JSON.stringify(data, null, 2) );
 
-        let { type } = data;
+        let type = ReloadClient.getEventName(data.type);
 
-        if (type === "eleventy.reload") {
+        if (type === "reload") {
           await this.onreload(data);
-        } else if (type === "eleventy.msg") {
+        } else if (type === "msg") {
           Util.log(`${data.message}`);
-        } else if (type === "eleventy.error") {
+        } else if (type === "error") {
           // Log Eleventy build errors
           // Extra parsing for Node Error objects
           let e = JSON.parse(data.error);
           Util.error(`Build error: ${e.message}`, e);
-        } else if (type === "eleventy.status") {
+        } else if (type === "status") {
           // A reconnect may have missed builds, but usually hasn’t—only reload if the
           // server moved on. No `buildId` (older server) reloads unconditionally, as before.
           if (data.status === "connected" && options.mode === "reconnect") {
@@ -347,9 +353,9 @@ class ReloadClient {
 
             Util.log(Util.capitalize(data.status));
           }
-        } else if(type === "eleventy.edit") {
+        } else if(type === "edit") {
           // TODO edits received from other clients
-        } else if(type === "eleventy.ack") {
+        } else if(type === "ack") {
           // acknowledge that a message has been received for removal on client
           for(let ackFn of this.#ack) {
             if(typeof ackFn) {
