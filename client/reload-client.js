@@ -354,7 +354,10 @@ class ReloadClient {
             Util.log(Util.capitalize(data.status));
           }
         } else if(type === "edit") {
-          // TODO edits received from other clients
+          // Forward server replies only (not requests echoed from other windows)
+          if("ok" in data && !data.edits) {
+            document.dispatchEvent(new CustomEvent("buildawesome:edit", { detail: data }));
+          }
         } else if(type === "ack") {
           // acknowledge that a message has been received for removal on client
           for(let ackFn of this.#ack) {
@@ -400,6 +403,9 @@ class ReloadClient {
     }
 
     await ReloadClient.reloadTypes[subtype](files, build);
+
+    // Morphdom patches skip page reloads, so let page scripts know a rebuild was applied
+    document.dispatchEvent(new CustomEvent("buildawesome:reload", { detail: { buildId } }));
   }
 
   addReconnectListeners(delay = 0) {

@@ -62,6 +62,17 @@ Opt out with:
 }
 ```
 
+## Client API
+
+The injected client is available as `window.BuildAwesomeReload` (alias `window.EleventyReload`; `sendToServer(type, data)` returns `{ id }`) and dispatches these events on `document`:
+
+- `buildawesome:reload` after a rebuild is applied (including in-place morphdom patches), with `detail: { buildId }`.
+- `buildawesome:edit` for edit replies from the server, with `detail` set to the full message: `{ type, id, ok: true, results }` or `{ type, id, ok: false, errors }`. Match `id` against the one returned by `sendToServer`.
+
+```js
+document.addEventListener("buildawesome:reload", (e) => console.log(e.detail.buildId));
+```
+
 ## Tests
 
 ```
