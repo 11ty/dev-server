@@ -97,7 +97,7 @@ const THREAD_TRANSFERABLE_OPTIONS = [
 
 const POLITE_WEBSOCKET_CLOSE_TIMEOUT = 50; // in ms
 
-export default class EleventyDevServer {
+export default class DevServer {
   #watcher;
   #serverClosing;
   #serverState;
@@ -119,7 +119,7 @@ export default class EleventyDevServer {
   #buildCount = 0;
 
   static getServer(...args) {
-    return new EleventyDevServer(...args);
+    return new DevServer(...args);
   }
 
   constructor(name, dir, options = {}) {
@@ -302,11 +302,11 @@ export default class EleventyDevServer {
   }
 
   // This runs at the end of the middleware chain
-  eleventyProjectMiddleware(req, res) {
+  projectStaticMiddleware(req, res) {
     return this.#staticFiles.serve(req, res);
   }
 
-  async eleventyDevServerMiddleware(req, res, next) {
+  async devServerMiddleware(req, res, next) {
     if(this.#serverState === "CLOSING") {
       return res.end("");
     }
@@ -425,7 +425,7 @@ export default class EleventyDevServer {
     middlewares.reverse();
 
     // Runs very first in the middleware chain
-    middlewares.push(this.eleventyDevServerMiddleware);
+    middlewares.push(this.devServerMiddleware);
 
     let bound = [];
     let next;
@@ -450,7 +450,7 @@ export default class EleventyDevServer {
   async onRequestHandler (req, res) {
     res = wrapResponse(res, this.#transformHtml(req, res));
 
-    await this.#runMiddlewareChain(req, res, this.eleventyProjectMiddleware);
+    await this.#runMiddlewareChain(req, res, this.projectStaticMiddleware);
   }
 
   /* ---------------------------------------------------------------------- *

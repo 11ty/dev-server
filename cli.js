@@ -1,5 +1,5 @@
 import { createRequire } from "node:module";
-import EleventyDevServer from "./server.js";
+import DevServer from "./server.js";
 
 const require = createRequire(import.meta.url);
 const pkg = require("./package.json");
@@ -63,7 +63,7 @@ Arguments:
   async serve(options = {}) {
     this.options = Object.assign(Cli.getDefaultOptions(), options);
 
-    this.server = EleventyDevServer.getServer("eleventy-dev-server-cli", this.options.input, {
+    this.server = DevServer.getServer("eleventy-dev-server-cli", this.options.input, {
       // TODO allow server configuration extensions
       showVersion: true,
       logger: Logger,

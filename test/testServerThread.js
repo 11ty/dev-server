@@ -1,7 +1,7 @@
 import test from "ava";
 import http from "http";
 import { Worker } from "node:worker_threads";
-import EleventyDevServer from "../server.js";
+import DevServer from "../server.js";
 
 // The dev server runs its HTTP server on a worker thread by default so that
 // requests stay fast while a build occupies the main thread. These tests assert
@@ -36,7 +36,7 @@ async function request(server, path) {
 async function inBothModes(options, fn) {
   let results = {};
   for(let serverThread of [true, false]) {
-    let server = new EleventyDevServer("test-server", "./test/stubs/", getOptions(
+    let server = new DevServer("test-server", "./test/stubs/", getOptions(
       Object.assign({}, options, { serverThread })
     ));
     server.serve(0);
@@ -50,11 +50,11 @@ async function inBothModes(options, fn) {
 }
 
 test("serverThread is on by default", async (t) => {
-  let server = new EleventyDevServer("test-server", "./test/stubs/", getOptions());
+  let server = new DevServer("test-server", "./test/stubs/", getOptions());
   t.true(server.isThreaded);
   await server.close();
 
-  let optOut = new EleventyDevServer("test-server", "./test/stubs/", getOptions({ serverThread: false }));
+  let optOut = new DevServer("test-server", "./test/stubs/", getOptions({ serverThread: false }));
   t.false(optOut.isThreaded);
   await optOut.close();
 });
@@ -162,7 +162,7 @@ test("Middleware headers survive fallthrough to the server thread", async (t) =>
 test("Aliases set before serve() reach the server thread", async (t) => {
   let results = {};
   for(let serverThread of [true, false]) {
-    let server = new EleventyDevServer("test-server", "./test/stubs/", getOptions({ serverThread }));
+    let server = new DevServer("test-server", "./test/stubs/", getOptions({ serverThread }));
     server.setAliases({ "/aliased": "./test/stubs/sample.html" });
     server.serve(0);
     results[serverThread ? "threaded" : "single"] = await request(server, "/aliased");
@@ -213,7 +213,7 @@ parentPort.postMessage({ max, count });
   const BLOCK_MS = 500;
 
   async function maxLatencyWhileBlocked(serverThread) {
-    let server = new EleventyDevServer("test-server", "./test/stubs/", getOptions({ serverThread }));
+    let server = new DevServer("test-server", "./test/stubs/", getOptions({ serverThread }));
     server.serve(0);
     let port = await server.getPort();
 
@@ -283,7 +283,7 @@ test("Request bodies are proxied to middleware", async (t) => {
 });
 
 test("A throwing middleware does not take down the server", async (t) => {
-  let server = new EleventyDevServer("test-server", "./test/stubs/", getOptions({
+  let server = new DevServer("test-server", "./test/stubs/", getOptions({
     middleware: [
       function(req, res, next) {
         if(req.url === "/boom") {

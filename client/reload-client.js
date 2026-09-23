@@ -449,3 +449,4 @@ reloader.init();
 
 // Backwards compat
 window.EleventyReload = reloader;
+window.BuildAwesomeReload = reloader;
