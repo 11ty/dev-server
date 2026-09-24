@@ -398,6 +398,13 @@ class ReloadClient {
   async onreload({ subtype, files, build, buildId }) {
     this.#buildId = buildId;
 
+    // A page this build moved (e.g. its permalink changed): go where it is now, not back to where it was
+    let redirect = (build?.redirects || []).find(({ from }) => from === document.location.pathname);
+    if(redirect) {
+      document.location.assign(redirect.to);
+      return;
+    }
+
     if(!ReloadClient.reloadTypes[subtype]) {
       subtype = "default";
     }
