@@ -8,6 +8,7 @@ import mime from "mime";
 import WebSocket, { WebSocketServer } from "ws";
 
 import StaticFiles from "./staticFiles.js";
+import { isPortInUse, portInUseError } from "./portCheck.js";
 import { parseClientMessage, isConnectionAllowed } from "./clientConnection.js";
 import wrapResponse from "./wrapResponse.js";
 
@@ -83,7 +84,7 @@ class ServerThread {
       if(err.code === "EADDRINUSE") {
         if(this.#portRetryCount < this.#options.portReassignmentRetryCount) {
           this.#portRetryCount++;
-          this.#server.listen({ port: err.port + 1, host: this.host });
+          this.#listen(err.port + 1);
           return;
         }
         parentPort.postMessage({
@@ -104,7 +105,16 @@ class ServerThread {
       });
     });
 
-    this.#server.listen({ port: this.startPort, host: this.host });
+    this.#listen(this.startPort);
+  }
+
+  async #listen(port) {
+    // Goes through the usual retry on the next port
+    if(await isPortInUse(port, this.host)) {
+      this.#server.emit("error", portInUseError(port));
+      return;
+    }
+    this.#server.listen({ port, host: this.host });
   }
 
   // Injects the live reload client into HTML responses. Mirrors the main thread.

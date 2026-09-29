@@ -18,6 +18,7 @@ import { createDebug } from "obug";
 import wrapResponse from "./server/wrapResponse.js";
 import ipAddress from "./server/ipAddress.js";
 import StaticFiles from "./server/staticFiles.js";
+import { isPortInUse, portInUseError } from "./server/portCheck.js";
 import { parseClientMessage, isConnectionAllowed } from "./server/clientConnection.js";
 
 const require = createRequire(import.meta.url);
@@ -839,7 +840,13 @@ export default class DevServer {
     return this.#readyPromise;
   }
 
-  _serverListen(port) {
+  async _serverListen(port) {
+    // Goes through the usual retry on the next port
+    if(await isPortInUse(port, this.listenHost)) {
+      this.server.emit("error", portInUseError(port));
+      return;
+    }
+
     this.server.listen({
       port,
       host: this.listenHost,

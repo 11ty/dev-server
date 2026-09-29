@@ -110,3 +110,27 @@ test("A non-loopback host is listed instead of localhost", async (t) => {
 
   await server.close();
 });
+
+for(let serverThread of [true, false]) {
+  let mode = serverThread ? "threaded" : "single-threaded";
+
+  test(`Moves to the next port when another server listens on every interface (${mode})`, async (t) => {
+    let blocker = http.createServer((req, res) => res.end("BLOCKER"));
+    await new Promise((resolve) => blocker.listen(0, "::", resolve));
+    let blockedPort = blocker.address().port;
+
+    let server = new DevServer("test-server", "./test/stubs/", {
+      serverThread,
+      portReassignmentRetryCount: 10,
+      logger: { info() {}, log() {}, error() {} },
+    });
+    server.serve(blockedPort);
+    let port = await server.getPort();
+
+    t.not(port, blockedPort);
+    t.true(await isReachable("127.0.0.1", port));
+
+    await server.close();
+    await new Promise((resolve) => blocker.close(resolve));
+  });
+}
