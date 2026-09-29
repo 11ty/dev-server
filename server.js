@@ -901,7 +901,8 @@ export default class DevServer {
   // Broadcasts to all open browser windows
   sendUpdateNotification(obj, options = {}) {
     if(this.isThreaded) {
-      this.#worker?.postMessage({ type: "broadcast", payload: obj });
+      // Serialized here: structured clone throws on values JSON drops (e.g. functions in template `data`)
+      this.#worker?.postMessage({ type: "broadcast", json: JSON.stringify(obj), buildId: obj.buildId });
       return;
     }
 

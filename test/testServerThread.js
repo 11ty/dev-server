@@ -414,3 +414,36 @@ test("Proxied requests expose socket details to middleware", async (t) => {
   t.is(threaded.body, "true");
   t.is(threaded.body, single.body);
 });
+
+test("Reloads with values that can't be cloned reach clients", async (t) => {
+  let server = new DevServer("test-server", "./test/stubs/", getOptions());
+  server.serve(0);
+  let port = await server.getPort();
+
+  let socket = new WebSocket(`ws://localhost:${port}`);
+  let messages = [];
+  let reloadMessage = new Promise((resolve) => {
+    socket.addEventListener("message", (event) => {
+      let data = JSON.parse(event.data);
+      messages.push(data);
+      if(data.type === "eleventy.status") {
+        server.reload({
+          files: ["./index.njk"],
+          build: {
+            outputs: true,
+            templates: [{ url: "/", inputPath: "./index.njk", content: "Home", data: { fn() {} } }],
+          },
+        });
+      } else if(data.type === "eleventy.reload") {
+        resolve(data);
+      }
+    });
+  });
+
+  let reload = await withTimeout(reloadMessage);
+  t.is(reload.build.templates[0].url, "/");
+  t.deepEqual(reload.build.templates[0].data, {});
+
+  socket.close();
+  await server.close();
+});

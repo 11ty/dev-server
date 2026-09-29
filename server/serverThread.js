@@ -342,12 +342,16 @@ class ServerThread {
   }
 
   broadcast(obj, include) {
+    this.#broadcastJson(JSON.stringify(obj), include);
+  }
+
+  #broadcastJson(json, include) {
     if(!this.#updateServer?.clients) {
       return;
     }
     for(let client of this.#updateServer.clients) {
       if((!include || include === client) && client.readyState === WebSocket.OPEN) {
-        client.send(JSON.stringify(obj));
+        client.send(json);
       }
     }
   }
@@ -403,10 +407,10 @@ class ServerThread {
       }
     } else if(msg.type === "broadcast") {
       // Reload payloads carry the new `buildId` for future connection messages
-      if(msg.payload.buildId) {
-        this.#buildId = msg.payload.buildId;
+      if(msg.buildId) {
+        this.#buildId = msg.buildId;
       }
-      this.broadcast(msg.payload);
+      this.#broadcastJson(msg.json);
     } else if(msg.type === "aliases") {
       this.#staticFiles.setAliases(msg.aliases);
     } else if(msg.type === "close") {
