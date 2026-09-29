@@ -309,10 +309,12 @@ test("A throwing middleware does not take down the server", async (t) => {
 
 // Only catches hangs, so it's generous for slow CI machines
 function withTimeout(promise, ms = 10000) {
-  return Promise.race([
-    promise,
-    new Promise((resolve, reject) => setTimeout(() => reject(new Error(`Timed out after ${ms}ms`)), ms)),
-  ]);
+  let timer;
+  let timeout = new Promise((resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`Timed out after ${ms}ms`)), ms);
+  });
+  // A pending timer would keep the test process from exiting
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 test("getPort() rejects when every port is in use", async (t) => {
@@ -752,7 +754,10 @@ test("Middleware can proxy a request body to a backend in both modes", async (t)
   };
 
   let results = await inBothModes(options, (server) => withTimeout(sendRequest(server, "/api/contact", { method: "POST", body: "name=Zach" })));
-  backend.close();
+
+  // Keep-alive connections would otherwise hold the test process open
+  backend.closeAllConnections();
+  await new Promise((resolve) => backend.close(resolve));
 
   for(let result of Object.values(results)) {
     t.is(result.body, "BACKEND:POST:name=Zach");
