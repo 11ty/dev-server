@@ -677,3 +677,10 @@ test("Built-in 500 page shows the error message in both modes", async (t) => {
     t.true(result.body.includes("<pre>middleware &lt;exploded&gt;</pre>"));
   }
 });
+
+test("Wrong-case URLs are a 404 in both modes", async (t) => {
+  let { threaded, single } = await inBothModes({}, (server) => request(server, "/SAMPLE"));
+
+  t.is(threaded.statusCode, 404);
+  t.is(single.statusCode, 404);
+});

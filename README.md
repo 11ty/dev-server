@@ -80,6 +80,16 @@ The server only listens on `127.0.0.1`, so other devices can't reach it. To open
 
 The start message then lists the network addresses too (turn that off with `showAllHosts: false`).
 
+## Case sensitivity
+
+URLs must match the case of files on disk, like most production servers, so `/About/` is a 404 when the file is `about/index.html`. This only changes anything on case-insensitive file systems (the macOS and Windows defaults). Opt out with:
+
+```js
+{
+  caseSensitive: false
+}
+```
+
 ## Allowed hosts
 
 Live reload only accepts connections from pages served by the dev server, on `localhost`, `*.localhost`, or an IP address. Add any other hostname you use (e.g. from `/etc/hosts` or a proxy that keeps the `Host` header), with a leading `.` to include subdomains:
@@ -121,6 +131,7 @@ npm run test
 
 - `v3.0.0`
   - Listens on `127.0.0.1` by default (set `host: "0.0.0.0"` for network access)
+  - URLs must match the case of files on disk (opt out with `caseSensitive: false`)
   - Runs the HTTP server on a worker thread by default (opt out with `serverThread: false`)
   - Replaces `--domdiff=false` with `--no-domdiff`
   - Bumps Node.js minimum to 22.15

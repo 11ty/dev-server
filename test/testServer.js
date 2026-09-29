@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import test from "ava";
 import DevServer from "../server.js";
@@ -349,5 +350,40 @@ test("Root requests don't pass an invalid path to fs.existsSync", async (t) => {
 
   process.off("warning", onWarning);
   t.false(warnings.includes("DEP0187"));
+  await server.close();
+});
+
+// macOS and Windows usually have case-insensitive file systems; Linux doesn't
+const isCaseInsensitiveFileSystem = fs.existsSync("test/stubs/SAMPLE.html");
+
+test("URLs must match the case of files on disk", async (t) => {
+  let server = new DevServer("test-server", "./test/stubs/", getOptions());
+
+  t.is(server.mapUrlToFilePath("/sample").statusCode, 200);
+  t.deepEqual(server.mapUrlToFilePath("/SAMPLE"), { statusCode: 404 });
+  t.deepEqual(server.mapUrlToFilePath("/Route1/"), { statusCode: 404 });
+  t.deepEqual(server.mapUrlToFilePath("/Route1"), { statusCode: 404 });
+  t.deepEqual(server.mapUrlToFilePath("/route1/INDEX.html"), { statusCode: 404 });
+  t.is(server.mapUrlToFilePath(encodeURI("/zach’s.html")).statusCode, 200);
+
+  await server.close();
+});
+
+test("Passthrough aliases must match the case of files on disk", async (t) => {
+  let server = new DevServer("test-server", "./test/stubs/", getOptions());
+  server.setAliases({ "/elsewhere": "./test/stubs/alternative" });
+
+  t.is(server.matchPassthroughAlias("/elsewhere/test"), "./test/stubs/alternative/test");
+  t.is(server.matchPassthroughAlias("/elsewhere/TEST"), false);
+
+  await server.close();
+});
+
+test("caseSensitive: false serves any case on case-insensitive file systems", async (t) => {
+  let server = new DevServer("test-server", "./test/stubs/", getOptions({ caseSensitive: false }));
+
+  t.is(server.mapUrlToFilePath("/SAMPLE").statusCode, isCaseInsensitiveFileSystem ? 200 : 404);
+  t.is(server.mapUrlToFilePath("/Route1/").statusCode, isCaseInsensitiveFileSystem ? 200 : 404);
+
   await server.close();
 });

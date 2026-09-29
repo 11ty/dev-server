@@ -45,6 +45,7 @@ const DEFAULT_OPTIONS = {
   aliases: {},          // Aliasing feature
   indexFileName: "index.html", // Allow custom index file name
   useCache: false,      // Use a cache for file contents
+  caseSensitive: true,  // Match URLs to files by exact case, like most production servers (matters on macOS and Windows)
   headers: {},          // Set default response headers
   allowedHosts: [],     // Extra hostnames allowed to connect to live reload (localhost and IP addresses always are), or `true` for any
   serverThread: true,   // Run the HTTP server on a worker thread so requests stay fast during builds
@@ -99,6 +100,7 @@ const THREAD_TRANSFERABLE_OPTIONS = [
   "useCache",
   "headers",
   "allowedHosts",
+  "caseSensitive",
 ];
 
 const POLITE_WEBSOCKET_CLOSE_TIMEOUT = 50; // in ms
