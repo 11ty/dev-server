@@ -75,7 +75,7 @@ async function fetchHeadersForRequest(t, server, path, extras) {
 
 test("Standard request", async (t) => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions());
-  server.serve(8100);
+  server.serve(7100);
 
   let data = await makeRequestTo(t, server, "/sample");
   t.true(data.includes("<script "));
@@ -93,7 +93,7 @@ test("One sync middleware", async t => {
     ],
   }));
 
-  server.serve(8100);
+  server.serve(7100);
 
   let data = await makeRequestTo(t, server, "/sample");
   t.true(data.includes("<script "));
@@ -113,7 +113,7 @@ test("Two sync middleware", async t => {
       }
     ],
   }));
-  server.serve(8100);
+  server.serve(7100);
 
   let data = await makeRequestTo(t, server, "/sample");
   t.true(data.includes("<script "));
@@ -130,7 +130,7 @@ test("One async middleware", async t => {
       }
     ],
   }));
-  server.serve(8100);
+  server.serve(7100);
 
   let data = await makeRequestTo(t, server, "/sample");
   t.true(data.includes("<script "));
@@ -150,7 +150,7 @@ test("Two async middleware", async t => {
       }
     ],
   }));
-  server.serve(8100);
+  server.serve(7100);
 
   let data = await makeRequestTo(t, server, "/sample");
   t.true(data.includes("<script "));
@@ -178,7 +178,7 @@ test("Async middleware that writes", async t => {
       },
     ],
   }));
-  server.serve(8100);
+  server.serve(7100);
 
   let data = await makeRequestTo(t, server, "/sample");
   t.true(data.includes("<script "));
@@ -215,7 +215,7 @@ test("Second async middleware that writes", async t => {
       },
     ],
   }));
-  server.serve(8100);
+  server.serve(7100);
 
   let data = await makeRequestTo(t, server, "/sample");
   t.true(data.includes("<script "));
@@ -242,7 +242,7 @@ test("Second middleware that consumes first middleware response body, issue #29"
       },
     ],
   }));
-  server.serve(8100);
+  server.serve(7100);
 
   let data = await makeRequestTo(t, server, "/sample");
   t.true(data.includes("<script "));
@@ -267,7 +267,7 @@ test("Two middlewares, end() in the first, skip the second", async t => {
       },
     ],
   }));
-  server.serve(8100);
+  server.serve(7100);
 
   let data = await makeRequestTo(t, server, "/sample");
   t.true(data.includes("<script "));
@@ -279,7 +279,7 @@ test("Two middlewares, end() in the first, skip the second", async t => {
 
 test("Fun unicode paths", async t => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions());
-  server.serve(8100);
+  server.serve(7100);
 
   let data = await makeRequestTo(t, server, encodeURI(`/zach’s.html`));
   t.true(data.includes("<script "));
@@ -300,7 +300,7 @@ test("Content-Type header via middleware", async t => {
       }
     ]
   }));
-  server.serve(8100);
+  server.serve(7100);
 
   let data = await fetchHeadersForRequest(t, server, encodeURI(`/index.php`));
   t.true(data['content-type'] === 'text/html; charset=utf-8');
@@ -314,7 +314,7 @@ test("Content-Range request", async (t) => {
     "./test/stubs/",
     getOptions()
   );
-  server.serve(8100);
+  server.serve(7100);
 
   const options = { headers: { Range: "bytes=0-48" } };
   let headers = await fetchHeadersForRequest(t, server, `/index.html`, options);
@@ -335,7 +335,7 @@ test("Content-Range request multiple is handled as full", async (t) => {
     "./test/stubs/",
     getOptions()
   );
-  server.serve(8100);
+  server.serve(7100);
 
   const options = { headers: { Range: "bytes=0-10,20-30" } };
   let headers = await fetchHeadersForRequest(t, server, `/index.html`, options);
@@ -351,7 +351,7 @@ test("Content-Range request invalid", async (t) => {
     "./test/stubs/",
     getOptions()
   );
-  server.serve(8100);
+  server.serve(7100);
 
   const options = { headers: { Range: "bytes=xxx" } };
   let data = await fetchHeadersForRequest(t, server, `/index.html`, options);
@@ -367,7 +367,7 @@ test("Content-Range request invalid reversed", async (t) => {
     "./test/stubs/",
     getOptions()
   );
-  server.serve(8100);
+  server.serve(7100);
   const options = { headers: { Range: "bytes=100-0" } };
   await t.throwsAsync(() => fetchHeadersForRequest(t, server, `/index.html`, options), {
     instanceOf: Error, message: 'Invalid status code 416'
@@ -381,7 +381,7 @@ test("Standard request does not include range headers", async (t) => {
     "./test/stubs/",
     getOptions()
   );
-  server.serve(8100);
+  server.serve(7100);
 
   let data = await fetchHeadersForRequest(t, server, `/index.html`);
   t.false("accept-ranges" in data);
@@ -401,7 +401,7 @@ test("Setting default response headers", async (t) => {
       }
     })
   );
-  server.serve(8100);
+  server.serve(7100);
 
   let data = await fetchHeadersForRequest(t, server, "/index.html");
   t.true(data["access-control-allow-origin"] === "*");
@@ -420,7 +420,7 @@ test("Default response headers cannot overwrite content-type", async (t) => {
       }
     })
   );
-  server.serve(8100);
+  server.serve(7100);
 
   let data = await fetchHeadersForRequest(t, server, "/index.html");
   t.true(data["content-type"].startsWith("text/html"));
@@ -439,10 +439,10 @@ function withResolvers() {
 
 test("Web Socket request", async (t) => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions());
-  server.serve(8200);
+  server.serve(7200);
 
   let port = await server.getPort();
-  t.is(8200, port);
+  t.is(7200, port);
 
   let socket = new WebSocket(`ws://localhost:${port}`);
 

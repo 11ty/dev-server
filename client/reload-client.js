@@ -110,7 +110,7 @@ class Util {
   }
 }
 
-class ReloadClient {
+export class ReloadClient {
   #socket;
   #ack = [];
   #ready = false; // swap to Promise.withResolvers
@@ -122,6 +122,7 @@ class ReloadClient {
   static TAG_NAME = "reload-client";
   static RECONNECT_INTERVAL = 2000; // ms
   static EVENT_PREFIXES = ["eleventy.", "buildawesome."];
+  static PRESERVE_ATTR = "data-buildawesome-preserve";
 
   static getEventName(type = "") {
     let prefix = ReloadClient.EVENT_PREFIXES.find(prefix => type.startsWith(prefix));
@@ -138,9 +139,56 @@ class ReloadClient {
 
   static reload(options = {}) {
     if(!this.RELOAD_ENABLED) {
-      return;
+      return false;
     }
     Util.fullPageReload(options);
+    return true;
+  }
+
+  // Treats `/about`, `/about/`, `/about/index.html`, and percent-encoded forms as the same page.
+  static normalizePath(path = "") {
+    let { pathname } = new URL(path, "http://localhost/");
+    try {
+      pathname = decodeURI(pathname);
+    } catch(e) {
+      // Keep malformed URIs encoded
+    }
+
+    if(pathname.endsWith("/index.html")) {
+      pathname = pathname.slice(0, -"index.html".length);
+    }
+    if(pathname.length > 1 && pathname.endsWith("/")) {
+      pathname = pathname.slice(0, -1);
+    }
+    return pathname;
+  }
+
+  // Returns `{ action: "morph", templates }`, `{ action: "reload", via }`, or `{ action: "none" }` for the default reload type.
+  static getReloadAction(files, build = {}, pathname = "") {
+    let normalizedPathname = this.normalizePath(pathname);
+    let templates = (build?.templates || []).filter(({url, inputPath}) => {
+      // `build.outputs` (newer Eleventy) means templates are already filtered to changed output
+      return this.normalizePath(url) === normalizedPathname && (build?.outputs || (files || []).includes(inputPath));
+    });
+
+    if(templates.length > 0) {
+      // Templates without content mean DOM diffing is disabled on the server
+      if(templates.some(({ content }) => typeof content !== "string")) {
+        return { action: "reload", via: "domdiff disabled" };
+      }
+
+      return { action: "morph", templates };
+    }
+
+    if(!build?.outputs) {
+      return { action: "reload", via: "ineligible domdiff" };
+    }
+
+    if(build.passthrough?.length > 0) {
+      return { action: "reload", via: "passthrough copy" };
+    }
+
+    return { action: "none" };
   }
 
   static reloadTypes = {
@@ -159,8 +207,7 @@ class ReloadClient {
         }
 
         if(!match) {
-          this.reload({ via: "css" });
-          return;
+          return this.reload({ via: "css" });
         }
       }
 
@@ -173,22 +220,24 @@ class ReloadClient {
       }
 
       Util.log(`CSS updated without page reload.`);
+      return true;
     },
     default: async (files, build = {}) => {
       let morphed = false;
-      let domdiffTemplates = (build?.templates || []).filter(({url, inputPath}) => {
-        return url === document.location.pathname && (files || []).includes(inputPath);
-      });
+      let { action, via, templates: domdiffTemplates } = this.getReloadAction(files, build, document.location.pathname);
 
-      // Not eligible for domDiff
-      if(domdiffTemplates.length === 0) {
-        this.reload({ via: "ineligible domdiff"});
-        return;
+      if(action === "none") {
+        Util.log(`No changes to this page.`);
+        return false;
+      }
+
+      if(action === "reload") {
+        return this.reload({ via });
       }
 
       // Temporary
       if(ReloadClient.RELOAD_ENABLED === false) {
-        return;
+        return false;
       }
 
       try {
@@ -207,9 +256,13 @@ class ReloadClient {
               if((node?.tagName || "").toLowerCase() === "link") {
                 return false;
               }
+
+              if(node?.hasAttribute?.(ReloadClient.PRESERVE_ATTR)) {
+                return false;
+              }
             },
             onBeforeElUpdated: (fromEl, toEl) => {
-              if(fromEl.hasAttribute("inert")) {
+              if(fromEl.hasAttribute("inert") || fromEl.hasAttribute(ReloadClient.PRESERVE_ATTR)) {
                 return false;
               }
 
@@ -264,8 +317,10 @@ class ReloadClient {
       }
 
       if (!morphed) {
-        this.reload({ via: "no domdiff content received" });
+        return this.reload({ via: "no domdiff content received" });
       }
+
+      return true;
     }
   }
 
@@ -409,10 +464,10 @@ class ReloadClient {
       subtype = "default";
     }
 
-    await ReloadClient.reloadTypes[subtype](files, build);
+    let changed = Boolean(await ReloadClient.reloadTypes[subtype](files, build));
 
-    // Morphdom patches skip page reloads, so let page scripts know a rebuild was applied
-    document.dispatchEvent(new CustomEvent("buildawesome:reload", { detail: { buildId } }));
+    // Morphdom patches skip page reloads, so let page scripts know a rebuild was applied (`changed` is false when this page was untouched)
+    document.dispatchEvent(new CustomEvent("buildawesome:reload", { detail: { buildId, changed } }));
   }
 
   addReconnectListeners(delay = 0) {
@@ -457,9 +512,12 @@ class ReloadClient {
   }
 }
 
-let reloader = new ReloadClient();
-reloader.init();
+// Skipped outside the browser (e.g. when imported by tests)
+if(typeof window !== "undefined") {
+  let reloader = new ReloadClient();
+  reloader.init();
 
-// Backwards compat
-window.EleventyReload = reloader;
-window.BuildAwesomeReload = reloader;
+  // Backwards compat
+  window.EleventyReload = reloader;
+  window.BuildAwesomeReload = reloader;
+}

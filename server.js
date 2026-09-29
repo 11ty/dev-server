@@ -1004,12 +1004,20 @@ export default class DevServer {
 
   reload(event = {}) {
     let { subtype, files, build } = event;
-    if (build?.templates) {
+    if (build?.templates && build.outputs && !this.options.domDiff) {
+      // Send changed page URLs without content so the client can still skip reloading untouched pages
+      build.templates = build.templates.map(({ url, inputPath, outputPath }) => ({ url, inputPath, outputPath }));
+    } else if (build?.templates) {
       build.templates = build.templates
         .filter(entry => {
           if(!this.options.domDiff) {
             // Don't include any files if the dom diffing option is disabled
             return false;
+          }
+
+          // Newer Eleventy (`build.outputs`) already filters to templates with changed output
+          if(build.outputs) {
+            return true;
           }
 
           // Filter to only include watched templates that were updated
