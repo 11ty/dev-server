@@ -35,6 +35,9 @@ npx @11ty/eleventy-dev-server
 # Serve a different subdirectory (also aliased as --input)
 npx @11ty/eleventy-dev-server --dir=_site
 
+# Or pass the directory as an argument
+npx @11ty/eleventy-dev-server _site
+
 # Disable the `domdiff` feature
 npx @11ty/eleventy-dev-server --no-domdiff
 

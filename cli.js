@@ -29,16 +29,18 @@ export class Cli {
   static getHelp() {
     return `Usage:
 
-       eleventy-dev-server
-       eleventy-dev-server --dir=_site
-       eleventy-dev-server --port=3000
+     eleventy-dev-server [dir] [options]
 
-Arguments:
+Examples:
 
-     --version
+     eleventy-dev-server
+     eleventy-dev-server _site
+     eleventy-dev-server --dir=_site --port=3000
+
+Options:
 
      --dir=.
-       Directory to serve (default: \`.\`)
+       Directory to serve (default: \`.\`), or pass it as the first argument.
 
      --input (alias for --dir)
 
@@ -50,23 +52,47 @@ Arguments:
      --no-domdiff       (disabled)
        Apply HTML changes without a full page reload.
 
+     --version
+
      --help`;
   }
 
   static parseArgs(args = []) {
     let defaults = Cli.getDefaultOptions();
-    return parseArgs({
+    let { values, positionals } = parseArgs({
       args,
       allowNegative: true,
+      allowPositionals: true,
       options: {
         dir: { type: "string" },
-        input: { type: "string", default: defaults.input },
+        input: { type: "string" },
         port: { type: "string", default: defaults.port },
         domdiff: { type: "boolean", default: defaults.domDiff },
         help: { type: "boolean", default: false },
         version: { type: "boolean", default: false },
       },
-    }).values;
+    });
+
+    let usageError = (message) => {
+      let error = new Error(message);
+      // Printed without a stack trace, like Node's own argument errors
+      error.code = "ERR_PARSE_ARGS_DIRECTORY";
+      return error;
+    };
+
+    if(positionals.length > 1) {
+      throw usageError(`Expected one directory, received ${positionals.length}: ${positionals.join(", ")}.`);
+    }
+
+    let [dir] = positionals;
+    if(dir !== undefined && (values.dir !== undefined || values.input !== undefined)) {
+      throw usageError("Pass the directory either as an argument or with --dir, not both.");
+    }
+
+    return {
+      ...values,
+      dir: dir ?? values.dir ?? values.input ?? defaults.input,
+    };
   }
 
   static getDefaultOptions() {

@@ -39,7 +39,7 @@ try {
     let cli = new Cli();
 
     cli.serve({
-      input: argv.dir || argv.input,
+      input: argv.dir,
       port: argv.port,
       domDiff: argv.domdiff,
     });

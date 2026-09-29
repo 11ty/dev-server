@@ -7,14 +7,15 @@ function parse(args) {
 }
 
 test("Defaults", (t) => {
-  t.deepEqual(parse([]), { dir: undefined, input: ".", port: "8080", domdiff: true, help: false, version: false });
+  t.deepEqual(parse([]), { dir: ".", input: undefined, port: "8080", domdiff: true, help: false, version: false });
 });
 
 test("String options", (t) => {
   t.is(parse(["--port=3000"]).port, "3000");
   t.is(parse(["--port", "3000"]).port, "3000");
-  t.is(parse(["--input=src"]).input, "src");
+  t.is(parse(["--input=src"]).dir, "src");
   t.is(parse(["--dir=_site"]).dir, "_site");
+  t.is(parse(["--dir=_site", "--input=src"]).dir, "_site");
 });
 
 test("Boolean flags", (t) => {
@@ -26,8 +27,19 @@ test("Boolean flags", (t) => {
 
 test("Invalid arguments throw parseArgs errors", (t) => {
   t.throws(() => Cli.parseArgs(["--foo"]), { code: "ERR_PARSE_ARGS_UNKNOWN_OPTION" });
-  t.throws(() => Cli.parseArgs(["src"]), { code: "ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL" });
   t.throws(() => Cli.parseArgs(["--port"]), { code: "ERR_PARSE_ARGS_INVALID_OPTION_VALUE" });
   // `--domdiff=false` was removed in v3 in favor of `--no-domdiff`
   t.throws(() => Cli.parseArgs(["--domdiff=false"]), { code: "ERR_PARSE_ARGS_INVALID_OPTION_VALUE" });
+});
+
+test("Directory as an argument", (t) => {
+  t.is(parse(["_site"]).dir, "_site");
+  t.deepEqual(parse(["_site", "--port=3000"]), { ...parse([]), dir: "_site", port: "3000" });
+  t.is(parse(["--no-domdiff", "_site"]).dir, "_site");
+});
+
+test("Directory argument conflicts", (t) => {
+  t.throws(() => Cli.parseArgs(["_site", "src"]), { code: "ERR_PARSE_ARGS_DIRECTORY", message: "Expected one directory, received 2: _site, src." });
+  t.throws(() => Cli.parseArgs(["_site", "--dir=src"]), { code: "ERR_PARSE_ARGS_DIRECTORY" });
+  t.throws(() => Cli.parseArgs(["_site", "--input=src"]), { code: "ERR_PARSE_ARGS_DIRECTORY" });
 });
