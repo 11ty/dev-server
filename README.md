@@ -62,6 +62,18 @@ Opt out with:
 }
 ```
 
+## Allowed hosts
+
+Live reload only accepts connections from pages served by the dev server, on `localhost`, `*.localhost`, or an IP address. Add any other hostname you use (e.g. from `/etc/hosts` or a proxy that keeps the `Host` header), with a leading `.` to include subdomains:
+
+```js
+{
+  allowedHosts: ["mysite.test", ".example.test"]
+}
+```
+
+`allowedHosts: true` allows any hostname, which drops protection against DNS rebinding.
+
 ## Client API
 
 The injected client is available as `window.BuildAwesomeReload` (alias `window.EleventyReload`; `sendToServer(type, data)` returns `{ id }`) and dispatches these events on `document`:

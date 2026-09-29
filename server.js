@@ -18,6 +18,7 @@ import { createDebug } from "obug";
 import wrapResponse from "./server/wrapResponse.js";
 import ipAddress from "./server/ipAddress.js";
 import StaticFiles from "./server/staticFiles.js";
+import { parseClientMessage, isConnectionAllowed } from "./server/clientConnection.js";
 
 const require = createRequire(import.meta.url);
 const pkg = require("./package.json");
@@ -43,6 +44,7 @@ const DEFAULT_OPTIONS = {
   indexFileName: "index.html", // Allow custom index file name
   useCache: false,      // Use a cache for file contents
   headers: {},          // Set default response headers
+  allowedHosts: [],     // Extra hostnames allowed to connect to live reload (localhost and IP addresses always are), or `true` for any
   serverThread: true,   // Run the HTTP server on a worker thread so requests stay fast during builds
   messageOnStart: ({ hosts, startupTime, version, options }) => {
     let hostsStr = " started";
@@ -94,6 +96,7 @@ const THREAD_TRANSFERABLE_OPTIONS = [
   "indexFileName",
   "useCache",
   "headers",
+  "allowedHosts",
 ];
 
 const POLITE_WEBSOCKET_CLOSE_TIMEOUT = 50; // in ms
@@ -859,6 +862,20 @@ export default class DevServer {
       options.server = this.server;
     }
 
+    let blocked = new Set();
+    options.verifyClient = ({ origin, req }) => {
+      let host = req.headers.host;
+      if(isConnectionAllowed({ origin, host }, this.options.allowedHosts)) {
+        return true;
+      }
+      let key = `${origin} ${host}`;
+      if(!blocked.has(key)) {
+        blocked.add(key);
+        this.logger.error(`Blocked a live reload connection from origin ${origin} to host ${host}. Add the hostname to the \`allowedHosts\` server option if this was you.`);
+      }
+      return false;
+    };
+
     let updateServer = new WebSocketServer(options);
     updateServer.on("connection", (ws) => {
       this.sendUpdateNotification({
@@ -868,7 +885,10 @@ export default class DevServer {
       }, { include: ws });
 
       ws.on("message", (data) => {
-        let parsed = JSON.parse(data.toString());
+        let parsed = parseClientMessage(data);
+        if(!parsed) {
+          return;
+        }
         if(parsed.id) {
           // send acknowledgement
           this.sendUpdateNotification({

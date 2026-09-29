@@ -8,6 +8,7 @@ import mime from "mime";
 import WebSocket, { WebSocketServer } from "ws";
 
 import StaticFiles from "./staticFiles.js";
+import { parseClientMessage, isConnectionAllowed } from "./clientConnection.js";
 import wrapResponse from "./wrapResponse.js";
 
 const POLITE_WEBSOCKET_CLOSE_TIMEOUT = 50; // in ms
@@ -299,6 +300,20 @@ class ServerThread {
       options.server = this.#server;
     }
 
+    let blocked = new Set();
+    options.verifyClient = ({ origin, req }) => {
+      let host = req.headers.host;
+      if(isConnectionAllowed({ origin, host }, this.#options.allowedHosts)) {
+        return true;
+      }
+      let key = `${origin} ${host}`;
+      if(!blocked.has(key)) {
+        blocked.add(key);
+        this.#log("error", [`Blocked a live reload connection from origin ${origin} to host ${host}. Add the hostname to the \`allowedHosts\` server option if this was you.`]);
+      }
+      return false;
+    };
+
     let updateServer = new WebSocketServer(options);
     updateServer.on("connection", (ws) => {
       this.broadcast({
@@ -314,12 +329,9 @@ class ServerThread {
       });
 
       ws.on("message", (data) => {
-        let parsed;
-        try {
-          parsed = JSON.parse(data.toString());
-        } catch(e) {
-          // A malformed message must not take down the thread
-          this.#log("error", [`Invalid client message: ${e.message}`]);
+        // A malformed message must not take down the thread
+        let parsed = parseClientMessage(data);
+        if(!parsed) {
           return;
         }
         if(parsed.id) {
