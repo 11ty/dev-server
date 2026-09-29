@@ -134,13 +134,13 @@ npm run test
 ## Changelog
 
 - `v3.0.0`
-  - _Breaking-ish:_ Runs the HTTP server on a worker thread by default (opt out with `serverThread: false`) so server doesn’t hang when build is taking lots of resources. Using middleware reverts to previous behavior.
+  - _Breaking-ish:_ Runs the HTTP server on a worker thread by default (opt out with `serverThread: false`) so server doesn’t hang when build is taking lots of resources. Requests handled by `middleware` or `onRequest` still run on the main thread.
   - _Breaking:_ Dev server now only listens on `127.0.0.1` by default (set `host: "0.0.0.0"` for broader network access)
+    - _Breaking:_ Live reload only accepts connections from pages on `localhost`, IP addresses, or hostnames in `allowedHosts`
   - _Breaking:_ URLs must match the case of files on disk to match strictest case-sensitive servers (opt out with `caseSensitive: false`)
-  - Live reload only accepts connections from pages on `localhost`, IP addresses, or hostnames in `allowedHosts`
   - Similar to `404.html`, adds support for `500.html` in the output folder (used for server errors)
   - `pathPrefix` now applies to injected client path and live reload connection
-  - Adds `data-buildawesome-preserve` attribute to opt-out of `domDiff` for specific DOM nodes
+  - Adds `data-buildawesome-preserve` attribute to opt out of `domDiff` for specific DOM nodes
   - Adds TypeScript types
   - _Breaking:_ Drops support for CLI `--domdiff=false`: use `--no-domdiff` instead.
   - _Breaking:_ Bumps Node.js minimum to 22.15
