@@ -404,8 +404,8 @@ export default class DevServer {
   }
 
   /** @internal */
-  augmentContentWithNotifier(content, inlineContents = false, options = {}) {
-    return this.#staticFiles.augmentContentWithNotifier(content, inlineContents, options);
+  augmentContentWithNotifier(content, options = {}) {
+    return this.#staticFiles.augmentContentWithNotifier(content, options);
   }
 
   /** @internal */
@@ -495,12 +495,13 @@ export default class DevServer {
       }
     } // end onRequest
 
-    if(req.url.startsWith(`/${this.options.injectedScriptsFolder}/reload-client.js`)) {
+    let injectedScript = this.#staticFiles.matchInjectedScript(req.url);
+    if(injectedScript === "reload-client.js") {
       if(this.options.liveReload) {
         res.setHeader("Content-Type", mime.getType("js"));
         return res.end(this.#staticFiles.getReloadClientContents());
       }
-    } else if(req.url === `/${this.options.injectedScriptsFolder}/morphdom.js`) {
+    } else if(injectedScript === "morphdom.js") {
       if(this.options.domDiff) {
         res.setHeader("Content-Type", mime.getType("js"));
         return res.end(this.#staticFiles.readFile(this.#staticFiles.getMorphdomPath()));
@@ -520,7 +521,7 @@ export default class DevServer {
         let scriptContents = this.#staticFiles.getReloadClientContents();
         let integrityHash = this.#staticFiles.sri(scriptContents);
 
-        return this.augmentContentWithNotifier(content, res.statusCode !== 200, {
+        return this.augmentContentWithNotifier(content, {
           scriptContents,
           integrityHash
         });

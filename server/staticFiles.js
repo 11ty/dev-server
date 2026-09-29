@@ -376,7 +376,23 @@ export default class StaticFiles {
     return `${this.options.pathPrefix}${pathname}`;
   }
 
-  augmentContentWithNotifier(content, inlineContents = false, options = {}) {
+  // URL for a script injected by the dev server, under `pathPrefix`.
+  getInjectedScriptPath(filename) {
+    return this.getServerPath(`${this.options.injectedScriptsFolder}/${filename}`);
+  }
+
+  // Returns `reload-client.js` or `morphdom.js` for their URLs (with or without `pathPrefix`), otherwise `undefined`.
+  matchInjectedScript(url) {
+    let { pathname } = new URL(url, "http://localhost/");
+    for(let filename of ["reload-client.js", "morphdom.js"]) {
+      // Unprefixed paths still work for pages cached with the old script URL
+      if(pathname === this.getInjectedScriptPath(filename) || pathname === `/${this.options.injectedScriptsFolder}/${filename}`) {
+        return filename;
+      }
+    }
+  }
+
+  augmentContentWithNotifier(content, options = {}) {
     let { integrityHash, scriptContents } = options;
     if(!scriptContents) {
       scriptContents = this.getReloadClientContents();
@@ -393,7 +409,7 @@ export default class StaticFiles {
     let searchParamsStr = searchParams.size > 0 ? `?${searchParams.toString()}` : "";
 
     // This isn't super necessary because it's a local file, but it's included anyway
-    let script = `<script type="module" integrity="${integrityHash}"${inlineContents ? `>${scriptContents}` : ` src="/${this.options.injectedScriptsFolder}/reload-client.js${searchParamsStr}">`}</script>`;
+    let script = `<script type="module" integrity="${integrityHash}" src="${this.getInjectedScriptPath("reload-client.js")}${searchParamsStr}"></script>`;
 
     if (content.includes("</head>")) {
       return content.replace("</head>", `${script}</head>`);

@@ -152,3 +152,12 @@ test("Client: normalizePath", (t) => {
   t.is(ReloadClient.normalizePath("/café/"), "/café");
   t.is(ReloadClient.normalizePath("/about.html"), "/about.html");
 });
+
+test("Client: getSocketUrl keeps pathPrefix from the script URL", (t) => {
+  t.is(ReloadClient.getSocketUrl("http://localhost:8080/about/", "http://localhost:8080/.11ty/reload-client.js"), "ws://localhost:8080/");
+  t.is(ReloadClient.getSocketUrl("https://example.test/prefix/about/", "https://example.test/prefix/.11ty/reload-client.js"), "wss://example.test/prefix/");
+});
+
+test("Client: getSocketUrl uses reloadPort", (t) => {
+  t.is(ReloadClient.getSocketUrl("http://localhost:8080/prefix/", "http://localhost:8080/prefix/.11ty/reload-client.js?reloadPort=8081"), "ws://localhost:8081/prefix/");
+});

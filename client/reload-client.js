@@ -143,6 +143,21 @@ export class ReloadClient {
     ReloadClient.RELOAD_ENABLED = Boolean(enabled);
   }
 
+  // The page’s host (or `reloadPort`), at the path above this script’s folder so `pathPrefix` is kept.
+  static getSocketUrl(documentHref, scriptHref) {
+    let scriptUrl = new URL(scriptHref);
+    let url = new URL(new URL("..", scriptUrl).pathname, documentHref);
+
+    let reloadPort = scriptUrl.searchParams.get(ReloadClient.PORT_PARAM);
+    if(reloadPort) {
+      url.port = reloadPort;
+    }
+
+    // works with http (ws) and https (wss)
+    url.protocol = url.protocol.replace("http", "ws");
+    return url.toString();
+  }
+
   static reload(options = {}) {
     if(!this.RELOAD_ENABLED) {
       return false;
@@ -349,19 +364,7 @@ export class ReloadClient {
       return this.#socket;
     }
 
-    let documentUrl = new URL(document.location.href);
-    // Fetched from module URL
-    let reloadPort = new URL(import.meta.url).searchParams.get(ReloadClient.PORT_PARAM);
-    if(reloadPort) {
-      documentUrl.port = reloadPort;
-    }
-
-    let { protocol, host } = documentUrl;
-
-    // works with http (ws) and https (wss)
-    let websocketProtocol = protocol.replace("http", "ws");
-
-    this.#socket = new WebSocket(`${websocketProtocol}//${host}`);
+    this.#socket = new WebSocket(ReloadClient.getSocketUrl(document.location.href, import.meta.url));
 
     return this.#socket;
   }

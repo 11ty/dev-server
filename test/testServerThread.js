@@ -684,3 +684,43 @@ test("Wrong-case URLs are a 404 in both modes", async (t) => {
   t.is(threaded.statusCode, 404);
   t.is(single.statusCode, 404);
 });
+
+test("Injected scripts and live reload are served under pathPrefix in both modes", async (t) => {
+  let results = await inBothModes({ pathPrefix: "/prefix/" }, async (server) => {
+    let page = await request(server, "/prefix/sample");
+    let client = await request(server, "/prefix/.11ty/reload-client.js");
+    let legacyClient = await request(server, "/.11ty/reload-client.js");
+    let morphdom = await request(server, "/prefix/.11ty/morphdom.js");
+
+    let port = await server.getPort();
+    let opened = await new Promise((resolve) => {
+      let socket = new WebSocket(`ws://localhost:${port}/prefix/`);
+      socket.addEventListener("open", () => {
+        socket.close();
+        resolve(true);
+      });
+      socket.addEventListener("error", () => resolve(false));
+    });
+
+    return { page, client, legacyClient, morphdom, opened };
+  });
+
+  for(let { page, client, legacyClient, morphdom, opened } of Object.values(results)) {
+    t.true(page.body.includes(`src="/prefix/.11ty/reload-client.js"`));
+    t.is(client.statusCode, 200);
+    t.true(client.body.includes("class ReloadClient"));
+    t.is(legacyClient.statusCode, 200);
+    t.is(morphdom.statusCode, 200);
+    t.true(opened);
+  }
+});
+
+test("Error pages load the reload client from a file, not inline, in both modes", async (t) => {
+  let results = await inBothModes({}, (server) => request(server, "/missing"));
+
+  for(let result of Object.values(results)) {
+    t.is(result.statusCode, 404);
+    t.true(result.body.includes(`src="/.11ty/reload-client.js"`));
+    t.false(result.body.includes("class ReloadClient"));
+  }
+});

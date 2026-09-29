@@ -90,6 +90,10 @@ URLs must match the case of files on disk, like most production servers, so `/Ab
 }
 ```
 
+## Reverse proxies
+
+Behind a reverse proxy that serves the site under a path, set `pathPrefix` to that path: the injected scripts and the live reload connection use it too. The proxy needs to forward WebSocket upgrades, and either keep the `Host` header or have its hostname in `allowedHosts`.
+
 ## Allowed hosts
 
 Live reload only accepts connections from pages served by the dev server, on `localhost`, `*.localhost`, or an IP address. Add any other hostname you use (e.g. from `/etc/hosts` or a proxy that keeps the `Host` header), with a leading `.` to include subdomains:

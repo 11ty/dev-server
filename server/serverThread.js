@@ -135,7 +135,7 @@ class ServerThread {
         let scriptContents = this.#staticFiles.getReloadClientContents();
         let integrityHash = this.#staticFiles.sri(scriptContents);
 
-        return this.#staticFiles.augmentContentWithNotifier(content, res.statusCode !== 200, {
+        return this.#staticFiles.augmentContentWithNotifier(content, {
           scriptContents,
           integrityHash,
         });
@@ -156,15 +156,16 @@ class ServerThread {
 
   // Serves the two files injected by the dev server itself. Always local to this thread.
   #serveInjectedScript(req, res) {
-    let { injectedScriptsFolder, liveReload, domDiff } = this.#options;
+    let { liveReload, domDiff } = this.#options;
+    let injectedScript = this.#staticFiles.matchInjectedScript(req.url);
 
-    if(req.url.startsWith(`/${injectedScriptsFolder}/reload-client.js`)) {
+    if(injectedScript === "reload-client.js") {
       if(liveReload) {
         res.setHeader("Content-Type", mime.getType("js"));
         res.end(this.#staticFiles.getReloadClientContents());
         return true;
       }
-    } else if(req.url === `/${injectedScriptsFolder}/morphdom.js`) {
+    } else if(injectedScript === "morphdom.js") {
       if(domDiff) {
         res.setHeader("Content-Type", mime.getType("js"));
         res.end(this.#staticFiles.readFile(this.#staticFiles.getMorphdomPath()));
