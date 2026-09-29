@@ -8,7 +8,6 @@ import { createSecureServer } from "node:http2";
 import { createServer } from "node:http";
 import { Worker } from "node:worker_threads";
 
-import "urlpattern-polyfill";
 import WebSocket, { WebSocketServer } from "ws";
 import mime from "mime";
 import chokidar from "chokidar";
@@ -22,33 +21,93 @@ import { isPortInUse, portInUseError } from "./server/portCheck.js";
 import { parseClientMessage, isConnectionAllowed } from "./server/clientConnection.js";
 
 const require = createRequire(import.meta.url);
+
+// Built into Node 24+, and kept out of the generated types
+if(!globalThis.URLPattern) {
+  require("urlpattern-polyfill");
+}
 const pkg = require("./package.json");
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const debug = createDebug("Eleventy:DevServer");
 
+/** @import { IncomingMessage, ServerResponse } from "node:http" */
+/** @import { ChokidarOptions, FSWatcher } from "chokidar" */
+
+/**
+ * @typedef {(req: IncomingMessage, res: ServerResponse, next: () => unknown) => unknown} Middleware
+ * @typedef {string | Response | { status?: number, headers?: Record<string, string> | Headers, body?: string } | undefined | null | false} OnRequestResult
+ * @typedef {(context: { url: URL, pattern: URLPattern, patternGroups: Record<string, string | undefined> }) => OnRequestResult | Promise<OnRequestResult>} OnRequestHandler
+ * @typedef {{ info(...args: unknown[]): void, log(...args: unknown[]): void, error(...args: unknown[]): void }} Logger
+ * @typedef {{ id: string, type: string, data: unknown, timestamp: number }} ClientMessage
+ * @typedef {{ hosts: string[], localhostUrl: string, startupTime: number, version: string, options: Record<string, any> }} StartMessageData
+ * @typedef {{ url: string, inputPath: string, outputPath?: string, content?: string }} BuildTemplate
+ * @typedef {{
+ *   files?: string[],
+ *   subtype?: "css",
+ *   build?: {
+ *     templates?: BuildTemplate[],
+ *     stylesheets?: string[],
+ *     passthrough?: string[],
+ *     redirects?: { from: string, to: string }[],
+ *     outputs?: boolean,
+ *   },
+ * }} ReloadEvent `build.outputs` means `templates` only holds pages whose output changed.
+ */
+/** @import { WrappedResponse } from "./server/wrapResponse.js" */
+/** @typedef {ServerResponse & { proxyAbort(): void, isProxyAborted(): boolean }} ProxyResponse */
+
 const DEFAULT_OPTIONS = {
-  port: 8080,
-  reloadPort: false,    // Falsy uses same as `port`
-  liveReload: true,     // Enable live reload at all
-  host: "127.0.0.1",    // Address to listen on, e.g. `0.0.0.0` for network access
-  showAllHosts: undefined, // List network addresses (other than localhost), defaults to on when `host` allows network access
-  injectedScriptsFolder: ".11ty", // Change the name of the special folder used for injected scripts
-  portReassignmentRetryCount: 10, // number of times to increment the port if in use
-  https: {},            // `key` and `cert`, required for http/2 and https
-  domDiff: true,        // Use morphdom to apply DOM diffing delta updates to HTML
-  showVersion: false,   // Whether or not to show the server version on the command line.
-  encoding: "utf-8",    // Default file encoding
-  pathPrefix: "/",      // May be overridden by Eleventy, adds a virtual base directory to your project
-  watch: [],            // Globs to pass to separate dev server chokidar for watching
-  chokidarOptions: {},  // Options to configure chokidar
-  chokidar: undefined,  // Override to watch instance (bypasses both `watch` and `chokidarOptions`)
-  aliases: {},          // Aliasing feature
-  indexFileName: "index.html", // Allow custom index file name
-  useCache: false,      // Use a cache for file contents
-  caseSensitive: true,  // Match URLs to files by exact case, like most production servers (matters on macOS and Windows)
-  headers: {},          // Set default response headers
-  allowedHosts: [],     // Extra hostnames allowed to connect to live reload (localhost and IP addresses always are), or `true` for any
-  serverThread: true,   // Run the HTTP server on a worker thread so requests stay fast during builds
+  /** Port to listen on, incremented if in use. */
+  port: /** @type {number | string} */ (8080),
+  /** Separate port for live reload, falsy uses `port`. */
+  reloadPort: /** @type {number | false} */ (false),
+  /** Enable live reload. */
+  liveReload: true,
+  /** Address to listen on, e.g. `0.0.0.0` for network access. */
+  host: "127.0.0.1",
+  /** List network addresses (other than localhost), defaults to on when `host` allows network access. */
+  showAllHosts: /** @type {boolean | undefined} */ (undefined),
+  /** Folder name for injected scripts. */
+  injectedScriptsFolder: ".11ty",
+  /** Number of times to try the next port if in use. */
+  portReassignmentRetryCount: 10,
+  /** Paths to a key and certificate, required for HTTPS and HTTP/2. */
+  https: /** @type {{ key?: string, cert?: string }} */ ({}),
+  /** Apply HTML changes without a full page reload. */
+  domDiff: true,
+  /** Show the server version on start. */
+  showVersion: false,
+  /** File encoding. */
+  encoding: /** @type {BufferEncoding} */ ("utf-8"),
+  /** Virtual base directory for the served files (may be set by Eleventy). */
+  pathPrefix: "/",
+  /** Globs to watch with the dev server’s own watcher. */
+  watch: /** @type {string[]} */ ([]),
+  /** Options for the dev server’s own watcher. */
+  chokidarOptions: /** @type {ChokidarOptions} */ ({}),
+  /** Watcher instance to use instead of `watch` and `chokidarOptions`. */
+  chokidar: /** @type {FSWatcher | undefined} */ (undefined),
+  /** Maps URLs to files outside the served directory. */
+  aliases: /** @type {Record<string, string>} */ ({}),
+  /** Index file for directory URLs. */
+  indexFileName: "index.html",
+  /** Cache file contents. */
+  useCache: false,
+  /** Match URLs to files by exact case, like most production servers (matters on macOS and Windows). */
+  caseSensitive: true,
+  /** Headers added to every static file response. */
+  headers: /** @type {Record<string, string>} */ ({}),
+  /** Extra hostnames allowed to connect to live reload (localhost and IP addresses always are), or `true` for any. */
+  allowedHosts: /** @type {string[] | true} */ ([]),
+  /** Run the HTTP server on a worker thread so requests stay fast during builds. */
+  serverThread: true,
+  /** Connect-style middleware, run before static files. */
+  middleware: /** @type {Middleware[]} */ ([]),
+  /**
+   * Returns the start message, or a falsy value for none.
+   * @param {StartMessageData} data
+   * @returns {string | false | undefined | void}
+   */
   messageOnStart: ({ hosts, startupTime, version, options }) => {
     let hostsStr = " started";
     if(Array.isArray(hosts) && hosts.length > 0) {
@@ -58,32 +117,38 @@ const DEFAULT_OPTIONS = {
 
     return `Server${hostsStr}${options.showVersion ? ` (v${version})` : ""}`;
   },
-  messageOnClose() {
+  /**
+   * Returns the close message, or a falsy value for none.
+   * @param {{ version: string, options: Record<string, any> }} data
+   * @returns {string | false | undefined | void}
+   */
+  messageOnClose(data) {
     return `Server closed.`;
   },
-  onRequest: {},        // Maps URLPatterns to dynamic callback functions that run on a request from a client.
-
-  // Example:
-  // "/foo/:name": function({ url, pattern, patternGroups }) {
-  //   return {
-  //     headers: {
-  //       "Content-Type": "text/html",
-  //     },
-  //     body: `${url} ${JSON.stringify(patternGroups)}`
-  //   }
-  // }
-
-  // Logger (fancier one is injected by Eleventy)
-  logger: {
+  /** Maps URL patterns (e.g. `/foo/:name`) to handlers that respond to matching requests. */
+  onRequest: /** @type {Record<string, OnRequestHandler>} */ ({}),
+  /** Logger (a fancier one is injected by Eleventy). */
+  logger: /** @type {Logger} */ ({
     info: console.log,
     log: console.log,
     error: console.error,
-  },
+  }),
+  /**
+   * Called for messages sent with the client’s `sendToServer()`.
+   * @param {ClientMessage} message
+   * @returns {void}
+   */
+  onClientMessage: function(message) {},
+};
 
-  onClientMessage: function({ id, type, data, timestamp }) {
-    // console.log( "Received:", data );
-  },
-}
+/**
+ * @typedef {typeof DEFAULT_OPTIONS} ResolvedOptions
+ * @typedef {Partial<ResolvedOptions> & {
+ *   folder?: string,
+ *   domdiff?: boolean,
+ *   enabled?: boolean,
+ * }} DevServerOptions Old names: `folder` for `injectedScriptsFolder`, `domdiff` for `domDiff`, `enabled` for `liveReload`.
+ */
 
 // Option keys that are safe to structured-clone across to the server thread.
 const THREAD_TRANSFERABLE_OPTIONS = [
@@ -132,16 +197,34 @@ export default class DevServer {
   #serverInstanceId = crypto.randomUUID();
   #buildCount = 0;
 
-  static getServer(...args) {
-    return new DevServer(...args);
+  /** @type {string} */
+  name;
+  /** Directory being served. @type {string} */
+  dir;
+  /** @type {ResolvedOptions} */
+  options = { ...DEFAULT_OPTIONS };
+  /** When the server started, for the start message. @internal */
+  start = 0;
+
+  /**
+   * @param {string} name
+   * @param {string} dir
+   * @param {DevServerOptions} [options]
+   */
+  static getServer(name, dir, options) {
+    return new DevServer(name, dir, options);
   }
 
+  /**
+   * @param {string} name
+   * @param {string} dir Directory to serve.
+   * @param {DevServerOptions} [options]
+   */
   constructor(name, dir, options = {}) {
     debug("Creating new Dev Server instance.")
     this.name = name;
     this.normalizeOptions(options);
 
-    this.fileCache = {};
     // Directory to serve
     if(!dir) {
       throw new Error("Missing `dir` to serve.");
@@ -167,6 +250,7 @@ export default class DevServer {
     this.#portPromise.catch(() => {});
   }
 
+  /** @returns {Logger} */
   get logger() {
     return this.options.logger;
   }
@@ -187,6 +271,7 @@ export default class DevServer {
     return `${this.#serverInstanceId}:${this.#buildCount}`;
   }
 
+  /** @param {DevServerOptions} [options] */
   normalizeOptions(options = {}) {
     this.options = Object.assign({}, DEFAULT_OPTIONS, options);
 
@@ -209,6 +294,7 @@ export default class DevServer {
     this.#staticFiles?.setOptions(this.options);
   }
 
+  /** @returns {FSWatcher} */
   get watcher() {
     if(this.#watcher) {
       return this.#watcher;
@@ -249,6 +335,7 @@ export default class DevServer {
     return this.#watcher;
   }
 
+  /** @internal */
   getWatcher() {
     // only initialize watcher if watcher via getWatcher if has targets
     // this.watcher in watchFiles() is a manual workaround
@@ -257,6 +344,7 @@ export default class DevServer {
     }
   }
 
+  /** @param {string[]} targets */
   watchFiles(targets) {
     if(Array.isArray(targets) && targets.length > 0) {
       debug("Also watching: %O", targets);
@@ -264,6 +352,7 @@ export default class DevServer {
     }
   }
 
+  /** @internal */
   cleanupPathPrefix(pathPrefix) {
     if(!pathPrefix || pathPrefix === "/") {
       return "/";
@@ -280,52 +369,67 @@ export default class DevServer {
   /* Static file resolution and serving lives in `server/staticFiles.js` so that it can
    * run either here or on the server thread. These stay as delegates for API compatibility. */
 
+  /**
+   * Maps URLs to files outside the served directory (emulated passthrough copy).
+   * @param {Record<string, string>} aliases
+   */
   setAliases(aliases) {
     this.#staticFiles.setAliases(aliases);
     this.#worker?.postMessage({ type: "aliases", aliases });
   }
 
+  /** @internal */
   matchPassthroughAlias(url) {
     return this.#staticFiles.matchPassthroughAlias(url);
   }
 
+  /** @internal */
   isFileInDirectory(dir, file) {
     return this.#staticFiles.isFileInDirectory(dir, file);
   }
 
+  /** @internal */
   getOutputDirFilePath(filepath, filename = "") {
     return this.#staticFiles.getOutputDirFilePath(filepath, filename);
   }
 
+  /** @internal */
   isOutputFilePathExists(rawPath) {
     return this.#staticFiles.isOutputFilePathExists(rawPath);
   }
 
+  /** @internal */
   mapUrlToFilePath(url) {
     return this.#staticFiles.mapUrlToFilePath(url);
   }
 
+  /** @internal */
   augmentContentWithNotifier(content, inlineContents = false, options = {}) {
     return this.#staticFiles.augmentContentWithNotifier(content, inlineContents, options);
   }
 
+  /** @internal */
   getFileContentType(filepath, res) {
     return this.#staticFiles.getFileContentType(filepath, res);
   }
 
+  /** @internal */
   renderFile(filepath, res) {
     return this.#staticFiles.renderFile(filepath, res);
   }
 
+  /** @param {string} pathname @returns {string} */
   getServerPath(pathname) {
     return this.#staticFiles.getServerPath(pathname);
   }
 
   // This runs at the end of the middleware chain
+  /** @internal */
   projectStaticMiddleware(req, res) {
     return this.#staticFiles.serve(req, res);
   }
 
+  /** @internal */
   async devServerMiddleware(req, res, next) {
     if(this.#serverState === "CLOSING") {
       return res.end("");
@@ -367,8 +471,9 @@ export default class DevServer {
               res.setHeader(key, value);
             }
           } else if(isPlainObject(result.headers)) {
-            for(let key of Object.keys(result.headers)) {
-              res.setHeader(key, result.headers[key]);
+            let headers = /** @type {Record<string, string>} */ (result.headers);
+            for(let key of Object.keys(headers)) {
+              res.setHeader(key, headers[key]);
             }
           }
 
@@ -427,7 +532,7 @@ export default class DevServer {
 
   /**
    * Builds and runs the middleware chain, ending with `terminal`.
-   * @param {Function} terminal runs last, after all user middleware
+   * @param {Middleware} terminal runs last, after all user middleware
    */
   async #runMiddlewareChain(req, res, terminal) {
     let middlewares = this.options.middleware || [];
@@ -453,11 +558,11 @@ export default class DevServer {
     let next;
 
     for(let ware of middlewares) {
-      let args = next ? [req, res, next] : [req, res];
+      let wareNext = next;
       // Middleware call `next()` without awaiting it, so each one catches its own errors
       let fn = () => {
         try {
-          let result = ware.call(this, ...args);
+          let result = /** @type {any} */ (ware.call(this, req, res, wareNext));
           return typeof result?.catch === "function" ? result.catch(handleError) : result;
         } catch(e) {
           handleError(e);
@@ -473,6 +578,7 @@ export default class DevServer {
     await first();
   }
 
+  /** @internal */
   async onRequestHandler (req, res) {
     res = wrapResponse(res, this.#transformHtml(req, res));
 
@@ -590,7 +696,7 @@ export default class DevServer {
    * so a request proxied from there can run the normal middleware chain here.
    */
   #createProxyResponse(req, id) {
-    let res = new http.ServerResponse(req);
+    let res = /** @type {ProxyResponse} */ (new http.ServerResponse(req));
     let headSent = false;
     let aborted = false;
 
@@ -608,14 +714,14 @@ export default class DevServer {
       post({ type: "proxyHead", id, statusCode: res.statusCode, headers: res.getHeaders() });
     };
 
-    res.write = function(data, encoding, callback) {
+    res.write = /** @type {any} */ (/** @this {ProxyResponse} */ function(data, encoding, callback) {
       if(typeof encoding === "function") {
         callback = encoding;
         encoding = undefined;
       }
       sendHead();
       if(data !== undefined && data !== null) {
-        let chunk = Buffer.isBuffer(data) ? data : Buffer.from(data, typeof encoding === "string" ? encoding : "utf8");
+        let chunk = Buffer.isBuffer(data) ? data : Buffer.from(data, typeof encoding === "string" ? /** @type {BufferEncoding} */ (encoding) : "utf8");
         // Copy so a pooled Buffer doesn't clone its whole backing store
         post({ type: "proxyChunk", id, chunk: new Uint8Array(chunk) });
       }
@@ -623,7 +729,7 @@ export default class DevServer {
         callback();
       }
       return true;
-    };
+    });
 
     res.writeHead = function(statusCode, ...args) {
       this.statusCode = statusCode;
@@ -638,7 +744,7 @@ export default class DevServer {
 
     res.flushHeaders = sendHead;
 
-    res.end = function(data, encoding, callback) {
+    res.end = /** @type {any} */ (/** @this {ProxyResponse} */ function(data, encoding, callback) {
       if(typeof data === "function") {
         callback = data;
         data = undefined;
@@ -654,7 +760,7 @@ export default class DevServer {
       }
       this.emit("finish");
       return this;
-    };
+    });
 
     // The browser went away: let middleware clean up (e.g. stop a stream)
     res.proxyAbort = () => {
@@ -672,6 +778,7 @@ export default class DevServer {
   }
 
   async #handleProxyRequest(msg) {
+    /** @type {Record<string, any>} */
     let reply = { type: "proxyResponse", id: msg.id };
 
     try {
@@ -697,8 +804,8 @@ export default class DevServer {
       }
       req.push(null);
 
-      let res = this.#createProxyResponse(req, msg.id);
-      res = wrapResponse(res, this.#transformHtml(req, res));
+      let proxyRes = this.#createProxyResponse(req, msg.id);
+      let res = /** @type {ProxyResponse & WrappedResponse} */ (wrapResponse(proxyRes, this.#transformHtml(req, proxyRes)));
       this.#proxyResponses.set(msg.id, res);
 
       // Middleware in the chain call `next()` without awaiting it, so the promise
@@ -713,7 +820,7 @@ export default class DevServer {
         // serves the file itself (keeping file I/O off this thread).
         this.#runMiddlewareChain(req, res, function fallthrough() {
           fellThrough = true;
-          resolve();
+          resolve(undefined);
         }).catch(reject);
       });
 
@@ -768,7 +875,7 @@ export default class DevServer {
     return host.includes(":") ? `[${host}]` : host;
   }
 
-  // Only URLs the server can actually be reached at.
+  /** URLs the server can be reached at. @returns {string[]} */
   getHosts() {
     let hosts = new Set();
     if((this.options.showAllHosts ?? true) && this.#listensOnAllInterfaces) {
@@ -780,6 +887,15 @@ export default class DevServer {
     return Array.from(hosts);
   }
 
+  /** @type {import("node:http").Server | import("node:http2").Http2SecureServer | undefined} */
+  /** @internal */
+  _server;
+  /** @internal */
+  portRetryCount = 0;
+  /** @internal @type {string | undefined} */
+  _serverProtocol;
+
+  /** @internal */
   get server() {
     if (this._server) {
       return this._server;
@@ -797,15 +913,16 @@ export default class DevServer {
         key: fs.readFileSync(key),
         cert: fs.readFileSync(cert),
       };
-      this._server = createSecureServer(options, this.onRequestHandler.bind(this));
+      this._server = createSecureServer(options, /** @type {any} */ (this.onRequestHandler.bind(this)));
       this._serverProtocol = "https:";
     } else {
       this._server = createServer(this.onRequestHandler.bind(this));
       this._serverProtocol = "http:";
     }
+    let server = this._server;
 
     this.portRetryCount = 0;
-    this._server.on("error", (err) => {
+    server.on("error", (/** @type {NodeJS.ErrnoException & { port: number }} */ err) => {
       if (err.code == "EADDRINUSE") {
         if (this.portRetryCount < this.options.portReassignmentRetryCount) {
           this.portRetryCount++;
@@ -827,21 +944,23 @@ export default class DevServer {
       }
     });
 
-    this._server.on("listening", (e) => {
-      this.#port = this._server.address().port;
+    server.on("listening", () => {
+      this.#port = /** @type {import("node:net").AddressInfo} */ (server.address()).port;
       this.setupReloadNotifier();
       this.logStartMessage();
       this.#portResolve(this.#port);
       this.#readyResolve();
     });
 
-    return this._server;
+    return server;
   }
 
+  /** Resolves once the server is listening. @returns {Promise<void>} */
   async ready() {
     return this.#readyPromise;
   }
 
+  /** @internal */
   async _serverListen(port) {
     // Goes through the usual retry on the next port
     if(await isPortInUse(port, this.listenHost)) {
@@ -855,6 +974,7 @@ export default class DevServer {
     });
   }
 
+  /** @internal */
   getServerUrlRaw(host, pathname = "", isRaw = true) {
     if(!this.#port || !this._serverProtocol) {
       throw new Error("Access to server url not yet available.");
@@ -863,14 +983,17 @@ export default class DevServer {
     return `${this._serverProtocol}//${host}:${this.#port}${isRaw ? pathname : this.getServerPath(pathname)}`;
   }
 
+  /** @param {string} host @param {string} [pathname] @returns {string} */
   getServerUrl(host, pathname = "") {
     return this.getServerUrlRaw(host, pathname, false);
   }
 
+  /** Resolves with the port the server is listening on. @returns {Promise<number>} */
   async getPort() {
     return this.#portPromise;
   }
 
+  /** @param {number | string} [port] */
   serve(port) {
     this.getWatcher();
 
@@ -881,6 +1004,7 @@ export default class DevServer {
     }
   }
 
+  /** @internal */
   _serverErrorHandler(err) {
     if (err.code == "EADDRINUSE") {
       this.logger.error(`Server error: Port in use ${err.port}`);
@@ -890,6 +1014,7 @@ export default class DevServer {
   }
 
   // Websocket Notifications
+  /** @internal */
   setupReloadNotifier() {
     let options = {};
     if(this.options.reloadPort) {
@@ -948,6 +1073,7 @@ export default class DevServer {
     this.#updateServer = updateServer;
   }
 
+  /** Live reload connections; in threaded mode, only `clients.size` is available. @returns {{ clients: { size: number } }} */
   get updateServer() {
     if(this.isThreaded) {
       // The websocket server lives on the server thread; expose the client count only.
@@ -957,6 +1083,11 @@ export default class DevServer {
   }
 
   // Broadcasts to all open browser windows
+  /**
+   * Sends a message to every open page.
+   * @param {Record<string, unknown>} obj
+   * @param {{ include?: unknown }} [options] Only send to this client.
+   */
   sendUpdateNotification(obj, options = {}) {
     if(this.isThreaded) {
       // Serialized here: structured clone throws on values JSON drops (e.g. functions in template `data`)
@@ -977,13 +1108,14 @@ export default class DevServer {
   }
 
   // Helper for promisifying close methods with callbacks, like http.Server or ws.WebSocketServer.
+  /** @internal */
   async _closeServer(server) {
     return new Promise((resolve, reject) => {
       server.close(err => {
         if (err) {
           reject(err);
         }
-        resolve();
+        resolve(undefined);
       });
 
       // Note: this method won't exist for updateServer
@@ -1006,7 +1138,7 @@ export default class DevServer {
       let done = () => {
         if(settled) return;
         settled = true;
-        resolve();
+        resolve(undefined);
       };
       this.#workerClosed = done;
       // Don't hang shutdown on a wedged socket.
@@ -1018,6 +1150,7 @@ export default class DevServer {
     await worker.terminate();
   }
 
+  /** @returns {Promise<void>} */
   async close() {
     // Prevent multiple invocations.
     if (this.#serverClosing) {
@@ -1082,6 +1215,7 @@ export default class DevServer {
     }
   }
 
+  /** @internal */
   logStartMessage() {
     if(this.options.showAllHosts && !this.#listensOnAllInterfaces) {
       this.logger.info(`\`showAllHosts\` lists network addresses only when the server listens on them. Set \`host: "0.0.0.0"\` to allow network access.`);
@@ -1095,10 +1229,15 @@ export default class DevServer {
     });
   }
 
+  /** @internal */
   logCloseMessage() {
     this.#logCallback(this.options.messageOnClose);
   }
 
+  /**
+   * Shows a build error in open pages’ consoles.
+   * @param {{ error: Error }} data
+   */
   sendError({ error }) {
     this.sendUpdateNotification({
       type: "eleventy.error",
@@ -1110,6 +1249,7 @@ export default class DevServer {
   // reverse of mapUrlToFilePath
   // /resource/ <= /resource/index.html
   // /resource <= resource.html
+  /** @internal */
   getUrlsFromFilePath(path) {
     if(this.dir === ".") {
       path = `/${path}`
@@ -1130,6 +1270,7 @@ export default class DevServer {
   }
 
   // returns [{ url, inputPath, content }]
+  /** @internal */
   getBuildTemplatesFromFilePath(path) {
     // We can skip this for non-html files, dom-diffing will not apply
     if(!path.endsWith(".html")) {
@@ -1147,6 +1288,11 @@ export default class DevServer {
     });
   }
 
+  /**
+   * Reloads pages for changed files, applying HTML changes in place when possible.
+   * @param {string[]} files
+   * @param {boolean} [useDomDiffingForHtml]
+   */
   reloadFiles(files, useDomDiffingForHtml = true) {
     if(!Array.isArray(files)) {
       throw new Error("reloadFiles method requires an array of file paths.");
@@ -1179,6 +1325,10 @@ export default class DevServer {
     });
   }
 
+  /**
+   * Tells open pages to reload or update.
+   * @param {ReloadEvent} [event]
+   */
   reload(event = {}) {
     let { subtype, files, build } = event;
     if (build?.templates && build.outputs && !this.options.domDiff) {

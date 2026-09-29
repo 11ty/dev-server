@@ -80,10 +80,8 @@ Options:
     });
 
     let usageError = (message) => {
-      let error = new Error(message);
       // Printed without a stack trace, like Node's own argument errors
-      error.code = "ERR_PARSE_ARGS_DIRECTORY";
-      return error;
+      return Object.assign(new Error(message), { code: "ERR_PARSE_ARGS_DIRECTORY" });
     };
 
     if(positionals.length > 1) {

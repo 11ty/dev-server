@@ -28,6 +28,10 @@ function getHostname(value) {
 }
 
 // Only domain names can be rebound to this machine, so localhost and IP addresses are always safe.
+/**
+ * @param {string | undefined} hostname
+ * @param {string[] | true} [allowedHosts]
+ */
 export function isHostnameAllowed(hostname, allowedHosts = []) {
   if(!hostname) {
     return false;

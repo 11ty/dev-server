@@ -10,8 +10,31 @@ function getContentType(headers) {
   }
 }
 
+/**
+ * @typedef {import("node:http").ServerResponse & {
+ *   body: string | undefined,
+ *   bodyUsed: boolean,
+ *   isCustomErrorPage?: boolean,
+ *   _shouldForceEnd: boolean,
+ *   _wrappedOriginalWrite: Function,
+ *   _wrappedOriginalWriteHead: Function,
+ *   _wrappedOriginalEnd: Function,
+ *   _wrappedTransformHtml: ((content: string) => string) | undefined,
+ *   _wrappedHeaders: any[][],
+ *   _hasEnded: boolean,
+ *   _contentType: string | undefined,
+ *   _writeCache: string | undefined,
+ * }} WrappedResponse A response that holds back HTML so the live reload client can be injected.
+ */
+
 // Inspired by `resp-modifier` https://github.com/shakyShane/resp-modifier/blob/4a000203c9db630bcfc3b6bb8ea2abc090ae0139/index.js
-export default function wrapResponse(resp, transformHtml) {
+/**
+ * @param {import("node:http").ServerResponse} res
+ * @param {(content: string) => string} [transformHtml]
+ * @returns {WrappedResponse}
+ */
+export default function wrapResponse(res, transformHtml) {
+  let resp = /** @type {WrappedResponse} */ (res);
   resp._wrappedOriginalWrite = resp.write;
   resp._wrappedOriginalWriteHead = resp.writeHead;
   resp._wrappedOriginalEnd = resp.end;
@@ -83,7 +106,7 @@ export default function wrapResponse(resp, transformHtml) {
   }
 
   // data can be a String or Buffer
-  resp.end = function(data, encoding, callback) {
+  resp.end = /** @type {any} */ (/** @this {WrappedResponse} */ function(data, encoding, callback) {
     resp._hasEnded = true;
 
     if(typeof this._writeCache === "string" || typeof data === "string") {
@@ -112,7 +135,7 @@ export default function wrapResponse(resp, transformHtml) {
         this._wrappedOriginalWriteHead(...headers);
       }
 
-      this._writeCache = [];
+      this._writeCache = undefined;
       this._wrappedOriginalWrite(result, encoding)
       return this._wrappedOriginalEnd(callback);
     } else {
@@ -126,7 +149,7 @@ export default function wrapResponse(resp, transformHtml) {
       }
       return this._wrappedOriginalEnd(callback);
     }
-  }
+  });
 
   return resp;
 }

@@ -498,7 +498,7 @@ export default class StaticFiles {
   /**
    * @param {String} type
    * @param {number} size
-   * @param {{start: number, end: number} | undefined} range
+   * @param {{start: number, end: number}} [range]
    */
   #contentRange(type, size, range) {
     return type + ' ' + (range ? range.start + '-' + range.end : '*') + '/' + size
@@ -506,7 +506,7 @@ export default class StaticFiles {
 
   /**
    * @param {import('node:http').IncomingMessage} req
-   * @param {import('node:http').OutgoingMessage} res
+   * @param {import('node:http').ServerResponse} res
    * This runs at the end of the middleware chain
    */
   // Serves an allowed `<status>.html` from the output directory if it exists, otherwise a minimal error page.

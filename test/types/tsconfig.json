@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    "module": "nodenext",
+    "target": "es2022",
+    "lib": ["es2022", "dom"],
+    "types": ["node"],
+    "paths": {
+      "@11ty/eleventy-dev-server": ["../../types/server.d.ts"]
+    }
+  },
+  "files": ["server.ts"]
+}

@@ -3,8 +3,8 @@ import net from "node:net";
 function tryListen(port, host) {
   return new Promise((resolve) => {
     let server = net.createServer();
-    server.once("error", (err) => resolve(err.code));
-    server.listen({ port, host }, () => server.close(() => resolve()));
+    server.once("error", (/** @type {NodeJS.ErrnoException} */ err) => resolve(err.code));
+    server.listen({ port, host }, () => server.close(() => resolve(undefined)));
   });
 }
 
@@ -25,8 +25,5 @@ export async function isPortInUse(port, host) {
 }
 
 export function portInUseError(port) {
-  let error = new Error(`Port ${port} is in use.`);
-  error.code = "EADDRINUSE";
-  error.port = Number(port);
-  return error;
+  return Object.assign(new Error(`Port ${port} is in use.`), { code: "EADDRINUSE", port: Number(port) });
 }

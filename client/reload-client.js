@@ -1,11 +1,11 @@
 class Util {
   static pad(num, digits = 2) {
-    let zeroes = new Array(digits + 1).join(0);
+    let zeroes = "0".repeat(digits);
     return `${zeroes}${num}`.slice(-1 * digits);
   }
 
-  static log(message) {
-    Util.output("log", message);
+  static log(...messages) {
+    Util.output("log", ...messages);
   }
   static error(message, error) {
     Util.output("error", message, error);
@@ -19,6 +19,11 @@ class Util {
       3
     )}`;
     console[type](`[11ty][${date} UTC]`, ...messages);
+  }
+
+  /** @returns {NodeListOf<HTMLLinkElement>} */
+  static getStylesheetLinks() {
+    return document.querySelectorAll(`link[rel="stylesheet"]`);
   }
 
   static capitalize(word) {
@@ -42,7 +47,7 @@ class Util {
 
     // Add new
     for(let attr of newAttrs) {
-      docEl.setAttribute(attr, parsedDoc.getAttribute(attr));
+      docEl.setAttribute(attr, parsedDoc.getAttribute(attr) ?? "");
     }
   }
 
@@ -198,7 +203,7 @@ export class ReloadClient {
       // `build.stylesheets` available in Eleventy v3.0.1-alpha.5+
       if(Array.isArray(build.stylesheets)) {
         let match = false;
-        for (let link of document.querySelectorAll(`link[rel="stylesheet"]`)) {
+        for (let link of Util.getStylesheetLinks()) {
           if (link.href) {
             let url = new URL(link.href);
             if(build.stylesheets.includes(url.pathname)) {
@@ -212,10 +217,10 @@ export class ReloadClient {
         }
       }
 
-      for (let link of document.querySelectorAll(`link[rel="stylesheet"]`)) {
+      for (let link of Util.getStylesheetLinks()) {
         if (link.href) {
           let url = new URL(link.href);
-          url.searchParams.set(this.CACHE_BUST_PARAM, Date.now());
+          url.searchParams.set(this.CACHE_BUST_PARAM, String(Date.now()));
           link.href = url.toString();
         }
       }
@@ -243,6 +248,7 @@ export class ReloadClient {
 
       try {
         // Important: using `./` allows the `.11ty` folder name to be changed
+        // @ts-expect-error Served next to this file at runtime
         const { default: morphdom } = await import(`./morphdom.js`);
 
         for (let {url, inputPath, content} of domdiffTemplates) {
@@ -525,6 +531,6 @@ if(typeof window !== "undefined") {
   reloader.init();
 
   // Backwards compat
-  window.EleventyReload = reloader;
-  window.BuildAwesomeReload = reloader;
+  /** @type {any} */ (window).EleventyReload = reloader;
+  /** @type {any} */ (window).BuildAwesomeReload = reloader;
 }

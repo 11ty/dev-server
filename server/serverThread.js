@@ -1,9 +1,9 @@
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import { createServer } from "node:http";
 import { createSecureServer } from "node:http2";
-import { parentPort, workerData } from "node:worker_threads";
+import { parentPort as maybeParentPort, workerData } from "node:worker_threads";
 
-import "urlpattern-polyfill";
 import mime from "mime";
 import WebSocket, { WebSocketServer } from "ws";
 
@@ -11,6 +11,14 @@ import StaticFiles from "./staticFiles.js";
 import { isPortInUse, portInUseError } from "./portCheck.js";
 import { parseClientMessage, isConnectionAllowed } from "./clientConnection.js";
 import wrapResponse from "./wrapResponse.js";
+
+// Built into Node 24+, and kept out of the generated types
+if(!globalThis.URLPattern) {
+  createRequire(import.meta.url)("urlpattern-polyfill");
+}
+
+// Always set, since this file only runs as a worker
+const parentPort = /** @type {import("node:worker_threads").MessagePort} */ (maybeParentPort);
 
 const POLITE_WEBSOCKET_CLOSE_TIMEOUT = 50; // in ms
 
@@ -377,7 +385,7 @@ class ServerThread {
 
   #closeOne(server) {
     return new Promise((resolve) => {
-      server.close(() => resolve());
+      server.close(() => resolve(undefined));
       if("closeAllConnections" in server) {
         server.closeAllConnections();
       }
