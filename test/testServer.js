@@ -337,3 +337,17 @@ test("Custom error pages are limited to allowed status codes", async (t) => {
   t.false(forbidden.body.includes("CUSTOM-403"));
   t.true(forbidden.body.includes("<pre>Built-in</pre>"));
 });
+
+test("Root requests don't pass an invalid path to fs.existsSync", async (t) => {
+  let warnings = [];
+  let onWarning = (warning) => warnings.push(warning.code);
+  process.on("warning", onWarning);
+
+  let server = new DevServer("test-server", "./test/stubs/", getOptions());
+  t.deepEqual(server.mapUrlToFilePath("/"), { statusCode: 200, filepath: testNormalizeFilePath("test/stubs/index.html") });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  process.off("warning", onWarning);
+  t.false(warnings.includes("DEP0187"));
+  await server.close();
+});

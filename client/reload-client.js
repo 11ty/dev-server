@@ -121,6 +121,7 @@ export class ReloadClient {
   static CACHE_BUST_PARAM = "_bust";
   static TAG_NAME = "reload-client";
   static RECONNECT_INTERVAL = 2000; // ms
+  static MAX_RECONNECT_INTERVAL = 5000; // ms, so a restarted server is found quickly without a focus or visibility change
   static EVENT_PREFIXES = ["eleventy.", "buildawesome."];
   static PRESERVE_ATTR = "data-buildawesome-preserve";
 
@@ -385,7 +386,10 @@ export class ReloadClient {
           // server moved on. No `buildId` (older server) reloads unconditionally, as before.
           if (data.status === "connected" && options.mode === "reconnect") {
             if(!this.#buildId || !data.buildId || this.#buildId !== data.buildId) {
-              ReloadClient.reload({ via: "reconnect"});
+              // This page is going away, so the reloaded page reports the connection
+              if(ReloadClient.reload({ via: "reconnect"})) {
+                return;
+              }
             } else {
               Util.log(`Reconnected without page reload.`);
             }
@@ -394,7 +398,7 @@ export class ReloadClient {
           if(data.status === "connected") {
             this.#buildId = data.buildId;
             // With multiple windows, only show one connection message
-            if(!this.isConnected) {
+            if(!this.connectionMessageShown) {
               Util.log(Util.capitalize(data.status));
             }
 
@@ -440,9 +444,14 @@ export class ReloadClient {
   }
 
   reconnect(e) {
+    // Only returning to the page should reconnect, not leaving it (#147)
+    if(e?.type === "visibilitychange" && document.visibilityState !== "visible") {
+      return;
+    }
+
     if(!e) {
       // incremental backoff if via setTimeout
-      this.reconnectInterval *= 2;
+      this.reconnectInterval = Math.min(this.reconnectInterval * 2, ReloadClient.MAX_RECONNECT_INTERVAL);
     }
 
     Util.log( "Reconnecting…" );
@@ -474,7 +483,6 @@ export class ReloadClient {
     this.removeReconnectListeners();
 
     setTimeout(() => {
-      window.addEventListener("focus", this.reconnectEventCallback);
       window.addEventListener("visibilitychange", this.reconnectEventCallback);
       clearTimeout(this.reconnectTimer);
 
@@ -485,7 +493,6 @@ export class ReloadClient {
 
   removeReconnectListeners() {
     clearTimeout(this.reconnectTimer);
-    window.removeEventListener("focus", this.reconnectEventCallback);
     window.removeEventListener("visibilitychange", this.reconnectEventCallback);
   }
 

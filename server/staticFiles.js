@@ -252,7 +252,8 @@ export default class StaticFiles {
     let indexHtmlExists = fs.existsSync(indexHtmlPath);
 
     let htmlPath = this.getOutputDirFilePath(url, ".html");
-    let htmlExists = fs.existsSync(htmlPath);
+    // No `resource.html` for the root
+    let htmlExists = htmlPath !== undefined && fs.existsSync(htmlPath);
 
     // /resource/ => /resource/index.html
     if (indexHtmlExists && url.endsWith("/")) {
