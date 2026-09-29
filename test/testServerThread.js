@@ -484,3 +484,12 @@ test("Event stream string writes reach the client before they end, in both modes
     await server.close();
   }
 });
+
+test("Encoded traversal to a sibling directory is refused in both modes", async (t) => {
+  let { threaded, single } = await inBothModes({}, (server) => request(server, "/..%2fstubs-sibling%2fsecret.txt"));
+
+  t.is(threaded.statusCode, 404);
+  t.is(single.statusCode, 404);
+  t.false(threaded.body.includes("SECRET"));
+  t.false(single.body.includes("SECRET"));
+});

@@ -123,31 +123,51 @@ export default class StaticFiles {
   }
 
   isFileInDirectory(dir, file) {
-    let absoluteDir = TemplatePath.absolutePath(dir);
-    let absoluteFile = TemplatePath.absolutePath(file);
-    return absoluteFile.startsWith(absoluteDir);
+    let relative = path.relative(path.resolve(dir), path.resolve(file));
+    return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+  }
+
+  // Decodes each segment on its own, so an encoded separator (`%2f`, `%5c`) can't become a real one.
+  #decodeUrlPath(urlPath) {
+    return urlPath.split("/").map(segment => {
+      let decoded;
+      try {
+        decoded = decodeURIComponent(segment);
+      } catch(e) {
+        throw new Error("Invalid path");
+      }
+      if(decoded === ".." || decoded.includes("/") || decoded.includes("\\")) {
+        throw new Error("Invalid path");
+      }
+      return decoded;
+    }).join("/");
   }
 
   getOutputDirFilePath(filepath, filename = "") {
+    let decodedPath = this.#decodeUrlPath(filepath);
+
     let computedPath;
     if(filename === ".html") {
+      // The root has no `resource.html` (it would sit beside the output directory)
+      if(!decodedPath.split("/").some(Boolean)) {
+        return;
+      }
+
       // avoid trailing slash for filepath/.html requests
-      let prefix = path.join(this.dir, filepath);
+      let prefix = path.join(this.dir, decodedPath);
       if(prefix.endsWith(path.sep)) {
         prefix = prefix.substring(0, prefix.length - path.sep.length);
       }
       computedPath = prefix + filename;
     } else {
-      computedPath = path.join(this.dir, filepath, filename);
+      computedPath = path.join(this.dir, decodedPath, filename);
     }
 
-    computedPath = decodeURIComponent(computedPath);
-
     if(!filename) { // is a direct URL request (not an implicit .html or index.html add)
-      let alias = this.matchPassthroughAlias(filepath);
+      let alias = this.matchPassthroughAlias(decodedPath);
 
       if(alias) {
-        if(!this.isFileInDirectory(path.resolve("."), alias)) {
+        if(!this.isFileInDirectory(".", alias)) {
           throw new Error("Invalid path");
         }
 
@@ -155,7 +175,7 @@ export default class StaticFiles {
       }
     }
 
-    // Check that the file is in the output path (error if folks try use `..` in the filepath)
+    // Check that the file is in the output path
     if(!this.isFileInDirectory(this.dir, computedPath)) {
       throw new Error("Invalid path");
     }
@@ -179,6 +199,20 @@ export default class StaticFiles {
    *    /resource/ matches /resource/index.html
    */
   mapUrlToFilePath(url) {
+    try {
+      return this.#mapUrlToFilePath(url);
+    } catch(e) {
+      // Traversal attempts and malformed encodings
+      if(e.message === "Invalid path") {
+        return {
+          statusCode: 404,
+        };
+      }
+      throw e;
+    }
+  }
+
+  #mapUrlToFilePath(url) {
     // Note: `localhost` is not important here, any host would work
     let u = new URL(url, "http://localhost/");
     url = u.pathname;

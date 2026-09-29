@@ -275,3 +275,35 @@ test("Test watch getter", async (t) => {
 
   await server.close();
 });
+
+test("Encoded traversal to a sibling directory is refused", async (t) => {
+  let server = new DevServer("test-server", "./test/stubs/", getOptions());
+
+  for(let url of [
+    "/%2e%2e%2fstubs-sibling%2fsecret.txt",
+    "/..%2fstubs-sibling%2fsecret.txt",
+    "/..%5cstubs-sibling%5csecret.txt",
+    "/%2e%2e/stubs-sibling/secret.txt",
+    "/../stubs-sibling/secret.txt",
+    "/%E0%A4%A",
+  ]) {
+    t.deepEqual(server.mapUrlToFilePath(url), { statusCode: 404 }, url);
+  }
+
+  t.throws(() => server.getOutputDirFilePath("/..%2fstubs-sibling%2fsecret.txt"), { message: "Invalid path" });
+  t.throws(() => server.getOutputDirFilePath("/../stubs-sibling/secret.txt"), { message: "Invalid path" });
+
+  await server.close();
+});
+
+test("isFileInDirectory doesn't match sibling directories that share a prefix", async (t) => {
+  let server = new DevServer("test-server", "./test/stubs/", getOptions());
+
+  t.true(server.isFileInDirectory("test/stubs", "test/stubs/index.html"));
+  t.true(server.isFileInDirectory("test/stubs", "test/stubs"));
+  t.false(server.isFileInDirectory("test/stubs", "test/stubs-sibling/secret.txt"));
+  t.false(server.isFileInDirectory("test/stubs", "test/stubs.html"));
+  t.false(server.isFileInDirectory("test/stubs", "test"));
+
+  await server.close();
+});
