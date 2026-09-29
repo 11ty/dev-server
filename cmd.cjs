@@ -41,6 +41,7 @@ try {
     cli.serve({
       input: argv.dir,
       port: argv.port,
+      host: argv.host,
       domDiff: argv.domdiff,
     });
 

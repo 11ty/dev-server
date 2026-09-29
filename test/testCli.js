@@ -2,12 +2,12 @@ import test from "ava";
 import { Cli } from "../cli.js";
 
 function parse(args) {
-  let { dir, input, port, domdiff, help, version } = Cli.parseArgs(args);
-  return { dir, input, port, domdiff, help, version };
+  let { dir, input, port, host, domdiff, help, version } = Cli.parseArgs(args);
+  return { dir, input, port, host, domdiff, help, version };
 }
 
 test("Defaults", (t) => {
-  t.deepEqual(parse([]), { dir: ".", input: undefined, port: "8080", domdiff: true, help: false, version: false });
+  t.deepEqual(parse([]), { dir: ".", input: undefined, port: "8080", host: undefined, domdiff: true, help: false, version: false });
 });
 
 test("String options", (t) => {
@@ -15,6 +15,8 @@ test("String options", (t) => {
   t.is(parse(["--port", "3000"]).port, "3000");
   t.is(parse(["--input=src"]).dir, "src");
   t.is(parse(["--dir=_site"]).dir, "_site");
+  t.is(parse(["--host=0.0.0.0"]).host, "0.0.0.0");
+  t.is(parse([]).host, undefined);
   t.is(parse(["--dir=_site", "--input=src"]).dir, "_site");
 });
 

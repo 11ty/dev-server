@@ -315,7 +315,7 @@ function withTimeout(promise, ms = 2000) {
 
 test("getPort() rejects when every port is in use", async (t) => {
   let blocker = http.createServer();
-  await new Promise((resolve) => blocker.listen(0, resolve));
+  await new Promise((resolve) => blocker.listen(0, "127.0.0.1", resolve));
 
   let server = new DevServer("test-server", "./test/stubs/", getOptions());
   server.options.portReassignmentRetryCount = 0;

@@ -33,11 +33,12 @@ class ServerThread {
   #closing = false;
   #buildId;
 
-  constructor({ dir, options, onRequestPatterns, hasMiddleware, passthroughAliases, port, buildId }) {
+  constructor({ dir, options, onRequestPatterns, hasMiddleware, passthroughAliases, port, host, buildId }) {
     this.#options = options;
     this.#buildId = buildId;
     this.hasMiddleware = hasMiddleware;
     this.startPort = port;
+    this.host = host;
 
     this.#staticFiles = new StaticFiles(dir, Object.assign({}, options, {
       logger: {
@@ -82,7 +83,7 @@ class ServerThread {
       if(err.code === "EADDRINUSE") {
         if(this.#portRetryCount < this.#options.portReassignmentRetryCount) {
           this.#portRetryCount++;
-          this.#server.listen({ port: err.port + 1 });
+          this.#server.listen({ port: err.port + 1, host: this.host });
           return;
         }
         parentPort.postMessage({
@@ -103,7 +104,7 @@ class ServerThread {
       });
     });
 
-    this.#server.listen({ port: this.startPort });
+    this.#server.listen({ port: this.startPort, host: this.host });
   }
 
   // Injects the live reload client into HTML responses. Mirrors the main thread.
@@ -289,6 +290,7 @@ class ServerThread {
     let options = {};
     if(this.#options.reloadPort) {
       options.port = this.#options.reloadPort;
+      options.host = this.host;
     } else {
       // includes the port
       options.server = this.#server;

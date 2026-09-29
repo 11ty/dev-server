@@ -29,7 +29,8 @@ const DEFAULT_OPTIONS = {
   port: 8080,
   reloadPort: false,    // Falsy uses same as `port`
   liveReload: true,     // Enable live reload at all
-  showAllHosts: false,  // IP address based hosts (other than localhost)
+  host: "127.0.0.1",    // Address to listen on, e.g. `0.0.0.0` for network access
+  showAllHosts: undefined, // List network addresses (other than localhost), defaults to on when `host` allows network access
   injectedScriptsFolder: ".11ty", // Change the name of the special folder used for injected scripts
   portReassignmentRetryCount: 10, // number of times to increment the port if in use
   https: {},            // `key` and `cert`, required for http/2 and https
@@ -494,6 +495,7 @@ export default class DevServer {
         // Eleventy may call setAliases() before serve()
         passthroughAliases: this.#staticFiles.passthroughAliases,
         port,
+        host: this.listenHost,
         buildId: this.buildId,
       },
     });
@@ -745,14 +747,33 @@ export default class DevServer {
    * Single-threaded server (used when `serverThread: false`)
    * ---------------------------------------------------------------------- */
 
+  get listenHost() {
+    return this.options.host || DEFAULT_OPTIONS.host;
+  }
+
+  get #listensOnAllInterfaces() {
+    let host = this.listenHost;
+    return host === "0.0.0.0" || host === "::";
+  }
+
+  // Hostname for the local URL: `localhost` unless the server only listens on another address.
+  get #localHostname() {
+    let host = this.listenHost;
+    if(this.#listensOnAllInterfaces || host === "localhost" || host === "::1" || host.startsWith("127.")) {
+      return "localhost";
+    }
+    return host.includes(":") ? `[${host}]` : host;
+  }
+
+  // Only URLs the server can actually be reached at.
   getHosts() {
     let hosts = new Set();
-    if(this.options.showAllHosts) {
+    if((this.options.showAllHosts ?? true) && this.#listensOnAllInterfaces) {
       for(let host of ipAddress()) {
         hosts.add(this.getServerUrl(host));
       }
     }
-    hosts.add(this.getServerUrl("localhost"));
+    hosts.add(this.getServerUrl(this.#localHostname));
     return Array.from(hosts);
   }
 
@@ -821,6 +842,7 @@ export default class DevServer {
   _serverListen(port) {
     this.server.listen({
       port,
+      host: this.listenHost,
     });
   }
 
@@ -863,6 +885,7 @@ export default class DevServer {
     let options = {};
     if(this.options.reloadPort) {
       options.port = this.options.reloadPort;
+      options.host = this.listenHost;
     } else {
       // includes the port
       options.server = this.server;
@@ -1051,10 +1074,14 @@ export default class DevServer {
   }
 
   logStartMessage() {
+    if(this.options.showAllHosts && !this.#listensOnAllInterfaces) {
+      this.logger.info(`\`showAllHosts\` lists network addresses only when the server listens on them. Set \`host: "0.0.0.0"\` to allow network access.`);
+    }
+
     let hosts = this.getHosts();
     this.#logCallback(this.options.messageOnStart, {
       hosts,
-      localhostUrl: this.getServerUrl("localhost"),
+      localhostUrl: this.getServerUrl(this.#localHostname),
       startupTime: Date.now() - this.start,
     });
   }

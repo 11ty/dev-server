@@ -36,6 +36,7 @@ Examples:
      eleventy-dev-server
      eleventy-dev-server _site
      eleventy-dev-server --dir=_site --port=3000
+     eleventy-dev-server --host=0.0.0.0
 
 Options:
 
@@ -47,6 +48,10 @@ Options:
      --port=8080
        Run the web server on this port (default: \`8080\`)
        Will autoincrement if already in use.
+
+     --host=127.0.0.1
+       Address to listen on (default: \`127.0.0.1\`)
+       Use \`0.0.0.0\` to allow access from other devices on your network.
 
      --domdiff          (enabled, default)
      --no-domdiff       (disabled)
@@ -67,6 +72,7 @@ Options:
         dir: { type: "string" },
         input: { type: "string" },
         port: { type: "string", default: defaults.port },
+        host: { type: "string" },
         domdiff: { type: "boolean", default: defaults.domDiff },
         help: { type: "boolean", default: false },
         version: { type: "boolean", default: false },
@@ -111,6 +117,7 @@ Options:
       showVersion: true,
       logger: Logger,
       domDiff: this.options.domDiff,
+      host: this.options.host,
 
       // CLI watches all files in the folder by default
       // this is different from Eleventy usage!

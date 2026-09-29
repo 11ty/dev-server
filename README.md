@@ -38,6 +38,9 @@ npx @11ty/eleventy-dev-server --dir=_site
 # Or pass the directory as an argument
 npx @11ty/eleventy-dev-server _site
 
+# Allow access from other devices on your network
+npx @11ty/eleventy-dev-server --host=0.0.0.0
+
 # Disable the `domdiff` feature
 npx @11ty/eleventy-dev-server --no-domdiff
 
@@ -64,6 +67,18 @@ Opt out with:
   serverThread: false
 }
 ```
+
+## Network access
+
+The server only listens on `127.0.0.1`, so other devices can't reach it. To open it from a phone or another machine, listen on every interface:
+
+```js
+{
+  host: "0.0.0.0"
+}
+```
+
+The start message then lists the network addresses too (turn that off with `showAllHosts: false`).
 
 ## Allowed hosts
 
@@ -104,5 +119,11 @@ npm run test
 
 ## Changelog
 
-- `v3.0.0` runs the HTTP server on a worker thread by default (opt out with `serverThread: false`), replaces `--domdiff=false` with `--no-domdiff`, bumps Node.js minimum to 22.15, [`chokidar@4` drops support for globs in `watch` option](https://github.com/paulmillr/chokidar#upgrading)
-- `v2.0.0` bumps Node.js minimum to 18.
+- `v3.0.0`
+  - Listens on `127.0.0.1` by default (set `host: "0.0.0.0"` for network access)
+  - Runs the HTTP server on a worker thread by default (opt out with `serverThread: false`)
+  - Replaces `--domdiff=false` with `--no-domdiff`
+  - Bumps Node.js minimum to 22.15
+  - [`chokidar@4` drops support for globs in `watch` option](https://github.com/paulmillr/chokidar#upgrading)
+- `v2.0.0`
+  - Bumps Node.js minimum to 18
