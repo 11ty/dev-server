@@ -64,7 +64,11 @@ export default function wrapResponse(resp, transformHtml) {
 
   // data can be a String or Buffer
   resp.write = function(data, ...args) {
-    if(typeof data === "string") {
+    // Event streams may never end, so their strings can't wait for `end()`
+    let contentType = this._contentType || getContentType(this.getHeaders());
+    let isEventStream = contentType?.startsWith("text/event-stream");
+
+    if(typeof data === "string" && !isEventStream) {
       if(!this._writeCache) {
         this._writeCache = "";
       }
@@ -72,7 +76,7 @@ export default function wrapResponse(resp, transformHtml) {
       // TODO encoding and callback args
       this._writeCache += data;
     } else {
-      // Buffers
+      // Buffers and event streams
       return this._wrappedOriginalWrite(data, ...args);
     }
     return this;

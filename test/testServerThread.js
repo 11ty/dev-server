@@ -447,3 +447,40 @@ test("Reloads with values that can't be cloned reach clients", async (t) => {
   socket.close();
   await server.close();
 });
+
+test("Event stream string writes reach the client before they end, in both modes", async (t) => {
+  for(let serverThread of [true, false]) {
+    let firstChunkReceived;
+    let firstChunkPromise = new Promise((resolve) => firstChunkReceived = resolve);
+
+    let server = new DevServer("test-server", "./test/stubs/", getOptions({
+      serverThread,
+      middleware: [
+        async function(req, res, next) {
+          res.writeHead(200, { "Content-Type": "text/event-stream" });
+          res.write("data: first\n\n");
+          await firstChunkPromise;
+          res.end("data: second\n\n");
+        },
+      ],
+    }));
+    server.serve(0);
+    let port = await server.getPort();
+
+    let body = await withTimeout(new Promise((resolve, reject) => {
+      http.get({ hostname: "127.0.0.1", port, path: "/events" }, (res) => {
+        let body = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk) => {
+          body += chunk;
+          firstChunkReceived();
+        });
+        res.on("end", () => resolve(body));
+      }).on("error", reject);
+    }));
+
+    t.is(body, "data: first\n\ndata: second\n\n", `serverThread: ${serverThread}`);
+
+    await server.close();
+  }
+});
