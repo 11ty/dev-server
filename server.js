@@ -1,6 +1,7 @@
 import path from "node:path";
 import fs from "node:fs";
 import http from "node:http";
+import { Duplex } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { createSecureServer } from "node:http2";
@@ -96,6 +97,7 @@ const THREAD_TRANSFERABLE_OPTIONS = [
 ];
 
 const POLITE_WEBSOCKET_CLOSE_TIMEOUT = 50; // in ms
+const MAX_WORKER_RESTARTS = 5;
 
 export default class DevServer {
   #watcher;
@@ -103,15 +105,20 @@ export default class DevServer {
   #serverState;
   #readyPromise;
   #readyResolve;
+  #readyReject;
 
   #portPromise;
   #portResolve;
+  #portReject;
   #staticFiles;
   #worker;
   #workerClosed;
   #port;
   #updateServer;
   #threadClientCount = 0;
+  #workerListening = false;
+  #workerRestarts = 0;
+  #proxyResponses = new Map();
 
   // `buildId` names the current content: new per process, bumped per reload. Clients compare
   // it on reconnect to see if they missed a build—see client/reload-client.js
@@ -138,13 +145,19 @@ export default class DevServer {
 
     this.getWatcher();
 
-    this.#readyPromise = new Promise((resolve) => {
+    this.#readyPromise = new Promise((resolve, reject) => {
       this.#readyResolve = resolve;
+      this.#readyReject = reject;
     });
 
-    this.#portPromise = new Promise((resolve) => {
+    this.#portPromise = new Promise((resolve, reject) => {
       this.#portResolve = resolve;
+      this.#portReject = reject;
     });
+
+    // Rejections surface through `ready()` and `getPort()`, not as unhandled rejections
+    this.#readyPromise.catch(() => {});
+    this.#portPromise.catch(() => {});
   }
 
   get logger() {
@@ -476,24 +489,68 @@ export default class DevServer {
       },
     });
 
-    this.#worker.on("message", (msg) => this.#onWorkerMessage(msg));
+    let worker = this.#worker;
+    this.#workerListening = false;
 
-    this.#worker.on("error", (err) => {
+    worker.on("message", (msg) => this.#onWorkerMessage(msg));
+
+    worker.on("error", (err) => {
       this.logger.error(`Server error: ${err.message}`);
     });
+
+    worker.on("exit", (code) => this.#onWorkerExit(worker, code));
 
     this.start = Date.now();
   }
 
+  // Rejects `ready()` and `getPort()` so callers don't wait on a server that will never listen.
+  #failToStart(error) {
+    this.logger.error(error.message);
+    this.#portReject(error);
+    this.#readyReject(error);
+  }
+
+  #abortProxyResponses() {
+    for(let res of this.#proxyResponses.values()) {
+      res.proxyAbort();
+    }
+    this.#proxyResponses.clear();
+  }
+
+  #onWorkerExit(worker, code) {
+    // Exits from `close()` or a fatal startup error are expected
+    if(worker !== this.#worker) {
+      return;
+    }
+
+    this.#worker = undefined;
+    this.#abortProxyResponses();
+
+    if(this.#workerListening && this.#workerRestarts < MAX_WORKER_RESTARTS) {
+      this.#workerRestarts++;
+      this.logger.error(`Server thread exited unexpectedly (code ${code}), restarting.`);
+      this.#startWorker(this.#port);
+      return;
+    }
+
+    this.#failToStart(new Error(`Server thread exited unexpectedly (code ${code}).`));
+  }
+
   #onWorkerMessage(msg) {
     if(msg.type === "listening") {
+      let isRestart = this.#port !== undefined;
+      this.#workerListening = true;
       this.#port = msg.port;
       this._serverProtocol = msg.protocol;
-      this.#portResolve(msg.port);
-      this.logStartMessage();
-      this.#readyResolve();
+      if(!isRestart) {
+        this.#portResolve(msg.port);
+        this.logStartMessage();
+        this.#readyResolve();
+      }
     } else if(msg.type === "proxyRequest") {
       this.#handleProxyRequest(msg);
+    } else if(msg.type === "proxyAbort") {
+      this.#proxyResponses.get(msg.id)?.proxyAbort();
     } else if(msg.type === "clientMessage") {
       if(typeof this.options.onClientMessage === "function") {
         this.options.onClientMessage(msg.parsed);
@@ -505,23 +562,51 @@ export default class DevServer {
     } else if(msg.type === "serverError") {
       this._serverErrorHandler({ code: msg.code, port: msg.port, message: msg.message });
     } else if(msg.type === "fatal") {
-      this.logger.error(msg.message);
+      let worker = this.#worker;
+      this.#worker = undefined;
+      worker?.terminate();
+      this.#failToStart(new Error(msg.message));
     } else if(msg.type === "closed") {
       this.#workerClosed?.();
     }
   }
 
   /**
-   * A response object that buffers everything written to it, so that a request
-   * proxied from the server thread can run the normal middleware chain here.
+   * A response object that streams everything written to it back to the server thread,
+   * so a request proxied from there can run the normal middleware chain here.
    */
-  #createProxyResponse(req) {
+  #createProxyResponse(req, id) {
     let res = new http.ServerResponse(req);
-    let chunks = [];
+    let headSent = false;
+    let aborted = false;
 
-    res.write = function(data, encoding) {
+    let post = (msg) => {
+      if(!aborted) {
+        this.#worker?.postMessage(msg);
+      }
+    };
+
+    let sendHead = () => {
+      if(headSent) {
+        return;
+      }
+      headSent = true;
+      post({ type: "proxyHead", id, statusCode: res.statusCode, headers: res.getHeaders() });
+    };
+
+    res.write = function(data, encoding, callback) {
+      if(typeof encoding === "function") {
+        callback = encoding;
+        encoding = undefined;
+      }
+      sendHead();
       if(data !== undefined && data !== null) {
-        chunks.push(Buffer.isBuffer(data) ? data : Buffer.from(data, typeof encoding === "string" ? encoding : "utf8"));
+        let chunk = Buffer.isBuffer(data) ? data : Buffer.from(data, typeof encoding === "string" ? encoding : "utf8");
+        // Copy so a pooled Buffer doesn't clone its whole backing store
+        post({ type: "proxyChunk", id, chunk: new Uint8Array(chunk) });
+      }
+      if(typeof callback === "function") {
+        callback();
       }
       return true;
     };
@@ -536,6 +621,8 @@ export default class DevServer {
       }
       return this;
     };
+
+    res.flushHeaders = sendHead;
 
     res.end = function(data, encoding, callback) {
       if(typeof data === "function") {
@@ -555,7 +642,17 @@ export default class DevServer {
       return this;
     };
 
-    res.getProxyBody = () => Buffer.concat(chunks);
+    // The browser went away: let middleware clean up (e.g. stop a stream)
+    res.proxyAbort = () => {
+      if(aborted) {
+        return;
+      }
+      aborted = true;
+      req.destroy();
+      res.emit("close");
+    };
+
+    res.isProxyAborted = () => aborted;
 
     return res;
   }
@@ -564,7 +661,16 @@ export default class DevServer {
     let reply = { type: "proxyResponse", id: msg.id };
 
     try {
-      let req = new http.IncomingMessage(null);
+      // Stands in for the real socket on the server thread
+      let socket = Object.assign(new Duplex({ read() {}, write(chunk, encoding, callback) { callback(); } }), msg.socket, {
+        setTimeout() {
+          return this;
+        },
+        setNoDelay() {},
+        setKeepAlive() {},
+      });
+
+      let req = new http.IncomingMessage(socket);
       req.method = msg.method;
       req.url = msg.url;
       req.headers = msg.headers || {};
@@ -577,8 +683,9 @@ export default class DevServer {
       }
       req.push(null);
 
-      let res = this.#createProxyResponse(req);
+      let res = this.#createProxyResponse(req, msg.id);
       res = wrapResponse(res, this.#transformHtml(req, res));
+      this.#proxyResponses.set(msg.id, res);
 
       // Middleware in the chain call `next()` without awaiting it, so the promise
       // returned by the chain can settle before an async middleware has written
@@ -586,6 +693,7 @@ export default class DevServer {
       let fellThrough = false;
       let settled = new Promise((resolve, reject) => {
         res.once("finish", resolve);
+        res.once("close", resolve);
 
         // Terminal handler: nothing here claimed the request, so the server thread
         // serves the file itself (keeping file I/O off this thread).
@@ -597,11 +705,15 @@ export default class DevServer {
 
       await settled;
 
+      if(res.isProxyAborted()) {
+        return;
+      }
+
       if(!fellThrough && res.bodyUsed) {
+        // The body was already streamed to the server thread
         reply.ended = true;
         reply.statusCode = res.statusCode;
         reply.headers = res.getHeaders();
-        reply.body = res.getProxyBody();
       } else {
         reply.fallthrough = true;
         reply.statusCode = res.statusCode;
@@ -613,6 +725,8 @@ export default class DevServer {
     } catch(e) {
       this.logger.error(`Server error: ${e.message}`);
       reply.error = e.message;
+    } finally {
+      this.#proxyResponses.delete(msg.id);
     }
 
     this.#worker?.postMessage(reply);

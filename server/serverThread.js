@@ -190,25 +190,25 @@ class ServerThread {
 
     // Slow path: user code lives on the main thread.
     let result = await this.#proxyToMainThread(req, res);
+    if(result.aborted) {
+      return;
+    }
 
     if(result.error) {
+      if(res.headersSent) {
+        return res._wrappedOriginalEnd.call(res);
+      }
       res.statusCode = 500;
       return res.end(result.error);
     }
 
-    for(let [key, value] of Object.entries(result.headers || {})) {
-      if(value !== undefined) {
-        res.setHeader(key, value);
-      }
+    if(result.ended) {
+      // The body was already streamed and transformed on the main thread, write through untouched.
+      this.#writeProxyHead(res, result);
+      return res._wrappedOriginalEnd.call(res);
     }
 
-    if(result.ended) {
-      if(typeof result.statusCode === "number") {
-        res.statusCode = result.statusCode;
-      }
-      // Already transformed on the main thread, write through untouched.
-      return res._wrappedOriginalEnd.call(res, result.body ? Buffer.from(result.body) : undefined);
-    }
+    this.#setProxyHeaders(res, result.headers);
 
     // Middleware fell through: serve the file from this thread.
     if(typeof result.statusCode === "number" && result.statusCode !== 200) {
@@ -236,15 +236,40 @@ class ServerThread {
     });
   }
 
+  #setProxyHeaders(res, headers = {}) {
+    for(let [key, value] of Object.entries(headers)) {
+      if(value !== undefined) {
+        res.setHeader(key, value);
+      }
+    }
+  }
+
+  #writeProxyHead(res, { statusCode, headers }) {
+    if(res.headersSent) {
+      return;
+    }
+    this.#setProxyHeaders(res, headers);
+    if(typeof statusCode === "number") {
+      res.statusCode = statusCode;
+    }
+    res._wrappedOriginalWriteHead.call(res, res.statusCode);
+  }
+
   async #proxyToMainThread(req, res) {
     let body = await this.#readRequestBody(req);
     let id = ++this.#proxyId;
+    let { remoteAddress, remotePort, remoteFamily, localAddress, localPort } = req.socket || {};
 
     return new Promise((resolve) => {
-      this.#pendingProxies.set(id, resolve);
+      this.#pendingProxies.set(id, { res, resolve });
 
-      // Don't leak the pending entry if the client gives up first.
-      res.on("close", () => this.#pendingProxies.delete(id));
+      // Tell the main thread when the client gives up first, so streaming middleware can stop.
+      res.on("close", () => {
+        if(this.#pendingProxies.delete(id)) {
+          parentPort.postMessage({ type: "proxyAbort", id });
+          resolve({ aborted: true });
+        }
+      });
 
       parentPort.postMessage({
         type: "proxyRequest",
@@ -253,6 +278,14 @@ class ServerThread {
         url: req.url,
         headers: req.headers,
         body,
+        socket: {
+          remoteAddress,
+          remotePort,
+          remoteFamily,
+          localAddress,
+          localPort,
+          encrypted: this.#protocol === "https:",
+        },
       });
     });
   }
@@ -281,7 +314,14 @@ class ServerThread {
       });
 
       ws.on("message", (data) => {
-        let parsed = JSON.parse(data.toString());
+        let parsed;
+        try {
+          parsed = JSON.parse(data.toString());
+        } catch(e) {
+          // A malformed message must not take down the thread
+          this.#log("error", [`Invalid client message: ${e.message}`]);
+          return;
+        }
         if(parsed.id) {
           // send acknowledgement
           this.broadcast({
@@ -346,10 +386,20 @@ class ServerThread {
 
   onMessage(msg) {
     if(msg.type === "proxyResponse") {
-      let resolve = this.#pendingProxies.get(msg.id);
-      if(resolve) {
+      let pending = this.#pendingProxies.get(msg.id);
+      if(pending) {
         this.#pendingProxies.delete(msg.id);
-        resolve(msg);
+        pending.resolve(msg);
+      }
+    } else if(msg.type === "proxyHead") {
+      let pending = this.#pendingProxies.get(msg.id);
+      if(pending) {
+        this.#writeProxyHead(pending.res, msg);
+      }
+    } else if(msg.type === "proxyChunk") {
+      let pending = this.#pendingProxies.get(msg.id);
+      if(pending) {
+        pending.res._wrappedOriginalWrite.call(pending.res, Buffer.from(msg.chunk));
       }
     } else if(msg.type === "broadcast") {
       // Reload payloads carry the new `buildId` for future connection messages

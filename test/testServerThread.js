@@ -305,3 +305,112 @@ test("A throwing middleware does not take down the server", async (t) => {
 
   await server.close();
 });
+
+function withTimeout(promise, ms = 2000) {
+  return Promise.race([
+    promise,
+    new Promise((resolve, reject) => setTimeout(() => reject(new Error(`Timed out after ${ms}ms`)), ms)),
+  ]);
+}
+
+test("getPort() rejects when every port is in use", async (t) => {
+  let blocker = http.createServer();
+  await new Promise((resolve) => blocker.listen(0, resolve));
+
+  let server = new DevServer("test-server", "./test/stubs/", getOptions());
+  server.options.portReassignmentRetryCount = 0;
+  server.serve(blocker.address().port);
+
+  await t.throwsAsync(withTimeout(server.getPort()), { message: /ports but they were all in use/ });
+  await t.throwsAsync(withTimeout(server.ready()));
+
+  await server.close();
+  await new Promise((resolve) => blocker.close(resolve));
+});
+
+test("getPort() rejects when the server thread fails to start", async (t) => {
+  let server = new DevServer("test-server", "./test/stubs/", getOptions({
+    https: { key: "./does-not-exist.key", cert: "./does-not-exist.cert" },
+  }));
+  server.serve(0);
+
+  await t.throwsAsync(withTimeout(server.getPort()), { message: /exited unexpectedly/ });
+
+  await server.close();
+});
+
+test("Streaming middleware responses reach the client before they end", async (t) => {
+  let firstChunkReceived;
+  let firstChunkPromise = new Promise((resolve) => firstChunkReceived = resolve);
+
+  let server = new DevServer("test-server", "./test/stubs/", getOptions({
+    middleware: [
+      async function(req, res, next) {
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        // Buffers stream through; strings are held until `end()` by the response wrapper
+        res.write(Buffer.from("first"));
+        await firstChunkPromise;
+        res.end(Buffer.from("second"));
+      },
+    ],
+  }));
+  server.serve(0);
+  let port = await server.getPort();
+
+  let body = await withTimeout(new Promise((resolve, reject) => {
+    http.get({ hostname: "127.0.0.1", port, path: "/stream" }, (res) => {
+      let body = "";
+      res.on("data", (chunk) => {
+        body += chunk;
+        firstChunkReceived();
+      });
+      res.on("end", () => resolve(body));
+    }).on("error", reject);
+  }));
+
+  t.is(body, "firstsecond");
+
+  await server.close();
+});
+
+test("Proxied middleware sees the client disconnect", async (t) => {
+  let closed;
+  let closedPromise = new Promise((resolve) => closed = resolve);
+
+  let server = new DevServer("test-server", "./test/stubs/", getOptions({
+    middleware: [
+      function(req, res, next) {
+        res.writeHead(200, { "Content-Type": "text/event-stream" });
+        res.write(Buffer.from("data: hello\n\n"));
+        res.on("close", closed);
+      },
+    ],
+  }));
+  server.serve(0);
+  let port = await server.getPort();
+
+  let request = http.get({ hostname: "127.0.0.1", port, path: "/events" }, (res) => {
+    res.once("data", () => request.destroy());
+  });
+  request.on("error", () => {});
+
+  await t.notThrowsAsync(withTimeout(closedPromise));
+
+  await server.close();
+});
+
+test("Proxied requests expose socket details to middleware", async (t) => {
+  let options = {
+    middleware: [
+      function(req, res, next) {
+        res.setHeader("Content-Type", "text/plain");
+        res.end(`${Boolean(req.socket.remoteAddress)}`);
+      },
+    ],
+  };
+
+  let { threaded, single } = await inBothModes(options, (server) => request(server, "/socket"));
+
+  t.is(threaded.body, "true");
+  t.is(threaded.body, single.body);
+});
