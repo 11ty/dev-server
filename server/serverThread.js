@@ -116,11 +116,6 @@ class ServerThread {
         let scriptContents = this.#staticFiles.getReloadClientContents();
         let integrityHash = this.#staticFiles.sri(scriptContents);
 
-        // Bare (not-custom) finalhandler error pages have a Content-Security-Policy `default-src 'none'` that
-        // prevents the client script from executing, so we override it
-        if(res.statusCode !== 200 && !res.isCustomErrorPage) {
-          res.setHeader("Content-Security-Policy", `script-src '${integrityHash}'`);
-        }
         return this.#staticFiles.augmentContentWithNotifier(content, res.statusCode !== 200, {
           scriptContents,
           integrityHash,
@@ -161,24 +156,24 @@ class ServerThread {
   }
 
   async #onRequest(req, res) {
+    if(this.#closing) {
+      return res.end("");
+    }
+
+    res = wrapResponse(res, this.#transformHtml(req, res));
+
     try {
       await this.#handleRequest(req, res);
     } catch(e) {
       // Never let a request take down the thread: that would take the whole server with it.
       this.#log("error", [`Server error: ${e.message}`]);
       if(!res.writableEnded) {
-        res.statusCode = 500;
-        res.end("");
+        this.#staticFiles.sendError(req, res, 500, e.message);
       }
     }
   }
 
   async #handleRequest(req, res) {
-    if(this.#closing) {
-      return res.end("");
-    }
-
-    res = wrapResponse(res, this.#transformHtml(req, res));
 
     if(this.#serveInjectedScript(req, res)) {
       return;
@@ -199,8 +194,7 @@ class ServerThread {
       if(res.headersSent) {
         return res._wrappedOriginalEnd.call(res);
       }
-      res.statusCode = 500;
-      return res.end(result.error);
+      return this.#staticFiles.sendError(req, res, 500, result.error);
     }
 
     if(result.ended) {

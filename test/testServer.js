@@ -307,3 +307,33 @@ test("isFileInDirectory doesn't match sibling directories that share a prefix", 
 
   await server.close();
 });
+
+test("Custom error pages are limited to allowed status codes", async (t) => {
+  let { default: StaticFiles, CUSTOM_ERROR_PAGE_STATUSES } = await import("../server/staticFiles.js");
+  let staticFiles = new StaticFiles("./test/stubs-error-pages/", { pathPrefix: "/", indexFileName: "index.html", aliases: {}, headers: {}, encoding: "utf-8", logger: { info() {}, log() {}, error() {} } });
+
+  t.deepEqual([...CUSTOM_ERROR_PAGE_STATUSES], [404, 500]);
+
+  function send(statusCode) {
+    let res = {
+      statusCode: 200,
+      headers: {},
+      headersSent: false,
+      setHeader(key, value) { this.headers[key.toLowerCase()] = value; },
+      getHeader(key) { return this.headers[key.toLowerCase()]; },
+      removeHeader(key) { delete this.headers[key.toLowerCase()]; },
+      end(body) { this.body = String(body ?? ""); },
+    };
+    staticFiles.sendError({ method: "GET" }, res, statusCode, "Built-in");
+    return res;
+  }
+
+  t.true(send(404).body.includes("CUSTOM-404"));
+  t.true(send(500).body.includes("CUSTOM-500"));
+
+  // `403.html` exists in the fixture but isn't allowed
+  let forbidden = send(403);
+  t.is(forbidden.statusCode, 403);
+  t.false(forbidden.body.includes("CUSTOM-403"));
+  t.true(forbidden.body.includes("<pre>Built-in</pre>"));
+});

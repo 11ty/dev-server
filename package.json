@@ -40,7 +40,7 @@
     "@11ty/eleventy-utils": "^2.0.7",
     "@11ty/node-version-check": "^1.0.1",
     "chokidar": "^5.0.0",
-    "finalhandler": "^2.1.1",
+    "entities": "^8.1.0",
     "mime": "^4.1.0",
     "morphdom": "^2.7.8",
     "obug": "^3.0.0",

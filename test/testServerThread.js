@@ -558,3 +558,122 @@ test("An invalid onRequest return value responds with 500 in both modes", async 
     t.is(after.statusCode, 200);
   }
 });
+
+test("Built-in 404 page in both modes", async (t) => {
+  let results = await inBothModes({}, (server) => request(server, "/missing&page"));
+
+  for(let result of Object.values(results)) {
+    t.is(result.statusCode, 404);
+    t.is(result.headers["content-type"], "text/html; charset=utf-8");
+    t.is(result.headers["content-security-policy"], undefined);
+    t.true(result.body.includes("<pre>Cannot GET /missing&amp;page</pre>"));
+    t.true(result.body.includes("<script "));
+  }
+});
+
+test("Built-in 404 page has no body for HEAD requests in both modes", async (t) => {
+  let results = await inBothModes({}, (server) => sendRequest(server, "/missing", { method: "HEAD" }));
+
+  for(let result of Object.values(results)) {
+    t.is(result.statusCode, 404);
+    t.is(result.body, "");
+  }
+});
+
+test("Middleware that sets a body without ending gets a 500 page in both modes", async (t) => {
+  let options = {
+    middleware: [
+      function(req, res, next) {
+        res.body = "unfinished";
+        next();
+      },
+    ],
+  };
+
+  let results = await inBothModes(options, (server) => request(server, "/missing"));
+
+  for(let result of Object.values(results)) {
+    t.is(result.statusCode, 500);
+    t.true(result.body.includes("A response was never written to the stream."));
+  }
+});
+
+async function inBothModesWithErrorPages(options, fn, dir = "./test/stubs-error-pages/") {
+  let results = {};
+  for(let serverThread of [true, false]) {
+    let server = new DevServer("test-server", dir, getOptions(
+      Object.assign({}, options, { serverThread })
+    ));
+    server.serve(0);
+    try {
+      results[serverThread ? "threaded" : "single"] = await fn(server);
+    } finally {
+      await server.close();
+    }
+  }
+  return results;
+}
+
+test("Custom 404.html in both modes", async (t) => {
+  let results = await inBothModesWithErrorPages({}, (server) => request(server, "/missing"));
+
+  for(let result of Object.values(results)) {
+    t.is(result.statusCode, 404);
+    t.true(result.body.includes("CUSTOM-404"));
+    t.true(result.body.includes("<script "));
+  }
+});
+
+test("Custom 500.html for a throwing middleware in both modes", async (t) => {
+  let options = {
+    middleware: [
+      function(req, res, next) {
+        throw new Error("middleware exploded");
+      },
+    ],
+  };
+
+  let results = await inBothModesWithErrorPages(options, (server) => request(server, "/sample"));
+
+  for(let result of Object.values(results)) {
+    t.is(result.statusCode, 500);
+    t.true(result.body.includes("CUSTOM-500"));
+    t.true(result.body.includes("<script "));
+  }
+});
+
+test("Custom 500.html for a body that was never written in both modes", async (t) => {
+  let options = {
+    middleware: [
+      function(req, res, next) {
+        res.body = "unfinished";
+        next();
+      },
+    ],
+  };
+
+  // A `404.html` would win here, so this directory only has `500.html`
+  let results = await inBothModesWithErrorPages(options, (server) => request(server, "/missing"), "./test/stubs-500-only/");
+
+  for(let result of Object.values(results)) {
+    t.is(result.statusCode, 500);
+    t.true(result.body.includes("CUSTOM-500"));
+  }
+});
+
+test("Built-in 500 page shows the error message in both modes", async (t) => {
+  let options = {
+    middleware: [
+      function(req, res, next) {
+        throw new Error("middleware <exploded>");
+      },
+    ],
+  };
+
+  let results = await inBothModes(options, (server) => request(server, "/sample"));
+
+  for(let result of Object.values(results)) {
+    t.is(result.statusCode, 500);
+    t.true(result.body.includes("<pre>middleware &lt;exploded&gt;</pre>"));
+  }
+});

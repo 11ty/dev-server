@@ -4,10 +4,10 @@ import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
-import finalhandler from "finalhandler";
 import mime from "mime";
 import parseRange from "range-parser";
 import { TemplatePath } from "@11ty/eleventy-utils";
+import { escapeText } from "entities/escape";
 import { createDebug } from "obug";
 
 const require = createRequire(import.meta.url);
@@ -18,6 +18,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = path.join(__dirname, "..");
 
 const BYTES_RANGE_REGEXP = /^ *bytes=/;
+
+// Status codes that can be served from a custom `<status>.html` page in the output directory
+export const CUSTOM_ERROR_PAGE_STATUSES = new Set([404, 500]);
 
 // Common web file extensions and their content types
 export const CONTENT_TYPES = {
@@ -488,27 +491,40 @@ export default class StaticFiles {
    * @param {import('node:http').OutgoingMessage} res
    * This runs at the end of the middleware chain
    */
+  // Serves an allowed `<status>.html` from the output directory if it exists, otherwise a minimal error page.
+  sendError(req, res, statusCode, message) {
+    if(res.headersSent) {
+      return res.end();
+    }
+
+    if(CUSTOM_ERROR_PAGE_STATUSES.has(statusCode)) {
+      let customPath = this.getOutputDirFilePath(`${statusCode}.html`);
+      if(this.isOutputFilePathExists(customPath)) {
+        res.statusCode = statusCode;
+        return this.renderFile(customPath, res);
+      }
+    }
+
+    let body = `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<title>Error</title>\n</head>\n<body>\n<pre>${escapeText(message)}</pre>\n</body>\n</html>\n`;
+
+    // Headers from upstream middleware don't describe this body
+    for(let name of ["Content-Encoding", "Content-Language", "Content-Range"]) {
+      res.removeHeader(name);
+    }
+
+    res.statusCode = statusCode;
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+
+    if(req.method === "HEAD") {
+      return res.end();
+    }
+
+    // A string, so the live reload client is injected
+    res.end(body);
+  }
+
   serve(req, res) {
-    // Known issue with `finalhandler` and HTTP/2:
-    // UnsupportedWarning: Status message is not supported by HTTP/2 (RFC7540 8.1.2.4)
-    // https://github.com/pillarjs/finalhandler/pull/34
-
-    let lastNext = finalhandler(req, res, {
-      onerror: (e) => {
-        if (e.statusCode === 404) {
-          let localPath = TemplatePath.stripLeadingSubPath(
-            e.path,
-            TemplatePath.absolutePath(this.dir)
-          );
-          this.logger.error(
-            `HTTP ${e.statusCode}: Template not found in output directory (${this.dir}): ${localPath}`
-          );
-        } else {
-          this.logger.error(`HTTP ${e.statusCode}: ${e.message}`);
-        }
-      },
-    });
-
     // middleware (maybe a serverless request) already set a body upstream, skip this part
     if(!res._shouldForceEnd) {
       let match = this.mapUrlToFilePath(req.url);
@@ -594,7 +610,6 @@ export default class StaticFiles {
         let raw404Path = this.getOutputDirFilePath("404.html");
         if(match.statusCode === 404 && this.isOutputFilePathExists(raw404Path)) {
           res.statusCode = match.statusCode;
-          res.isCustomErrorPage = true;
           return this.renderFile(raw404Path, res);
         }
       }
@@ -604,13 +619,18 @@ export default class StaticFiles {
       if(res._shouldForceEnd) {
         res.end();
       } else {
-        let err = new Error("A response was never written to the stream. Are you missing a server middleware with `res.end()`?");
-        err.statusCode = 500;
-        lastNext(err);
-        return;
+        let message = "A response was never written to the stream. Are you missing a server middleware with `res.end()`?";
+        this.logger.error(`HTTP 500: ${message}`);
+        return this.sendError(req, res, 500, message);
       }
     }
 
-    lastNext();
+    let pathname;
+    try {
+      pathname = new URL(req.url, "http://localhost/").pathname;
+    } catch(e) {
+      pathname = "resource";
+    }
+    return this.sendError(req, res, 404, `Cannot ${req.method} ${pathname}`);
   }
 }

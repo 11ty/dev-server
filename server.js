@@ -411,11 +411,6 @@ export default class DevServer {
         let scriptContents = this.#staticFiles.getReloadClientContents();
         let integrityHash = this.#staticFiles.sri(scriptContents);
 
-        // Bare (not-custom) finalhandler error pages have a Content-Security-Policy `default-src 'none'` that
-        // prevents the client script from executing, so we override it
-        if(res.statusCode !== 200 && !res.isCustomErrorPage) {
-          res.setHeader("Content-Security-Policy", `script-src '${integrityHash}'`);
-        }
         return this.augmentContentWithNotifier(content, res.statusCode !== 200, {
           scriptContents,
           integrityHash
@@ -446,10 +441,7 @@ export default class DevServer {
     let handleError = (e) => {
       this.logger.error(`Server error: ${e.message}`);
       if(!res.bodyUsed) {
-        if(!res.headersSent) {
-          res.statusCode = 500;
-        }
-        res.end("");
+        this.#staticFiles.sendError(req, res, 500, e.message);
       }
     };
 
