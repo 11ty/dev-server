@@ -804,6 +804,8 @@ export default class DevServer {
         req.push(Buffer.from(msg.body));
       }
       req.push(null);
+      // The whole body is already here; without this, closing the request emits `aborted`
+      req.complete = true;
 
       let proxyRes = this.#createProxyResponse(req, msg.id);
       let res = /** @type {ProxyResponse & WrappedResponse} */ (wrapResponse(proxyRes, this.#transformHtml(req, proxyRes)));

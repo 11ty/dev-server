@@ -724,3 +724,35 @@ test("Error pages load the reload client from a file, not inline, in both modes"
     t.false(result.body.includes("class ReloadClient"));
   }
 });
+
+test("Middleware can proxy a request body to a backend in both modes", async (t) => {
+  let backend = http.createServer((req, res) => {
+    let chunks = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => res.end(`BACKEND:${req.method}:${Buffer.concat(chunks).toString()}`));
+  });
+  await new Promise((resolve) => backend.listen(0, "127.0.0.1", resolve));
+  let backendPort = backend.address().port;
+
+  let options = {
+    middleware: [
+      // Like `http-proxy`: pipe the request out, and give up if it reports being aborted
+      function(req, res, next) {
+        let proxyReq = http.request({ hostname: "127.0.0.1", port: backendPort, method: req.method, path: req.url, headers: req.headers }, (proxyRes) => {
+          res.writeHead(proxyRes.statusCode, proxyRes.headers);
+          proxyRes.pipe(res);
+        });
+        proxyReq.on("error", () => res.end("PROXY ERROR"));
+        req.on("aborted", () => proxyReq.destroy());
+        req.pipe(proxyReq);
+      },
+    ],
+  };
+
+  let results = await inBothModes(options, (server) => withTimeout(sendRequest(server, "/api/contact", { method: "POST", body: "name=Zach" })));
+  backend.close();
+
+  for(let result of Object.values(results)) {
+    t.is(result.body, "BACKEND:POST:name=Zach");
+  }
+});
