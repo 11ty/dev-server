@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import { parseArgs } from "node:util";
 import DevServer from "./server.js";
 
 const require = createRequire(import.meta.url);
@@ -46,10 +47,26 @@ Arguments:
        Will autoincrement if already in use.
 
      --domdiff          (enabled, default)
-     --domdiff=false    (disabled)
+     --no-domdiff       (disabled)
        Apply HTML changes without a full page reload.
 
      --help`;
+  }
+
+  static parseArgs(args = []) {
+    let defaults = Cli.getDefaultOptions();
+    return parseArgs({
+      args,
+      allowNegative: true,
+      options: {
+        dir: { type: "string" },
+        input: { type: "string", default: defaults.input },
+        port: { type: "string", default: defaults.port },
+        domdiff: { type: "boolean", default: defaults.domDiff },
+        help: { type: "boolean", default: false },
+        version: { type: "boolean", default: false },
+      },
+    }).values;
   }
 
   static getDefaultOptions() {

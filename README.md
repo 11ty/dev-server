@@ -36,7 +36,7 @@ npx @11ty/eleventy-dev-server
 npx @11ty/eleventy-dev-server --dir=_site
 
 # Disable the `domdiff` feature
-npx @11ty/eleventy-dev-server --domdiff=false
+npx @11ty/eleventy-dev-server --no-domdiff
 
 # Full command list in the Help
 npx @11ty/eleventy-dev-server --help
@@ -101,5 +101,5 @@ npm run test
 
 ## Changelog
 
-- `v3.0.0` runs the HTTP server on a worker thread by default (opt out with `serverThread: false`), bumps Node.js minimum to 22.15, [`chokidar@4` drops support for globs in `watch` option](https://github.com/paulmillr/chokidar#upgrading)
+- `v3.0.0` runs the HTTP server on a worker thread by default (opt out with `serverThread: false`), replaces `--domdiff=false` with `--no-domdiff`, bumps Node.js minimum to 22.15, [`chokidar@4` drops support for globs in `watch` option](https://github.com/paulmillr/chokidar#upgrading)
 - `v2.0.0` bumps Node.js minimum to 18.
