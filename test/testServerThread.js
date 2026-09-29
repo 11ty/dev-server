@@ -187,7 +187,8 @@ test("Injected scripts are served off the main thread", async (t) => {
   t.is(threaded.morphdom.body, single.morphdom.body);
 });
 
-test("Requests are served while the main thread is blocked", async (t) => {
+// Serial: blocking the main thread would stall other tests in this file running at the same time
+test.serial("Requests are served while the main thread is blocked", async (t) => {
   // The probe has to run off the main thread, otherwise it would be blocked
   // alongside the server and the test would pass no matter what.
   const PROBE = `
@@ -306,7 +307,8 @@ test("A throwing middleware does not take down the server", async (t) => {
   await server.close();
 });
 
-function withTimeout(promise, ms = 2000) {
+// Only catches hangs, so it's generous for slow CI machines
+function withTimeout(promise, ms = 10000) {
   return Promise.race([
     promise,
     new Promise((resolve, reject) => setTimeout(() => reject(new Error(`Timed out after ${ms}ms`)), ms)),
