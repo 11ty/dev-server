@@ -1,6 +1,6 @@
 import test from "ava";
 import http from "http";
-import EleventyDevServer from "../server.js";
+import DevServer from "../server.js";
 
 function getOptions(options = {}) {
   options.logger = {
@@ -44,9 +44,7 @@ async function makeRequestTo(t, server, path, extras = {}) {
         t.true( true );
         resolve(rawData);
       });
-    }).on('error', (e) => {
-      console.error(`Got error: ${e.message}`);
-    });
+    }).on('error', reject);
   })
 }
 
@@ -71,15 +69,13 @@ async function fetchHeadersForRequest(t, server, path, extras) {
       let headers = res.headers;
       resolve(headers);
 
-    }).on('error', (e) => {
-      console.error(`Got error: ${e.message}`);
-    });
+    }).on('error', reject);
   })
 }
 
 test("Standard request", async (t) => {
-  let server = new EleventyDevServer("test-server", "./test/stubs/", getOptions());
-  server.serve(8100);
+  let server = new DevServer("test-server", "./test/stubs/", getOptions());
+  server.serve(0);
 
   let data = await makeRequestTo(t, server, "/sample");
   t.true(data.includes("<script "));
@@ -89,7 +85,7 @@ test("Standard request", async (t) => {
 });
 
 test("One sync middleware", async t => {
-  let server = new EleventyDevServer("test-server", "./test/stubs/", getOptions({
+  let server = new DevServer("test-server", "./test/stubs/", getOptions({
     middleware: [
       function(req, res, next) {
         return next();
@@ -97,7 +93,7 @@ test("One sync middleware", async t => {
     ],
   }));
 
-  server.serve(8100);
+  server.serve(0);
 
   let data = await makeRequestTo(t, server, "/sample");
   t.true(data.includes("<script "));
@@ -107,7 +103,7 @@ test("One sync middleware", async t => {
 });
 
 test("Two sync middleware", async t => {
-  let server = new EleventyDevServer("test-server", "./test/stubs/", getOptions({
+  let server = new DevServer("test-server", "./test/stubs/", getOptions({
     middleware: [
       function(req, res, next) {
         return next();
@@ -117,7 +113,7 @@ test("Two sync middleware", async t => {
       }
     ],
   }));
-  server.serve(8100);
+  server.serve(0);
 
   let data = await makeRequestTo(t, server, "/sample");
   t.true(data.includes("<script "));
@@ -127,14 +123,14 @@ test("Two sync middleware", async t => {
 });
 
 test("One async middleware", async t => {
-  let server = new EleventyDevServer("test-server", "./test/stubs/", getOptions({
+  let server = new DevServer("test-server", "./test/stubs/", getOptions({
     middleware: [
       async function(req, res, next) {
         return next();
       }
     ],
   }));
-  server.serve(8100);
+  server.serve(0);
 
   let data = await makeRequestTo(t, server, "/sample");
   t.true(data.includes("<script "));
@@ -144,7 +140,7 @@ test("One async middleware", async t => {
 });
 
 test("Two async middleware", async t => {
-  let server = new EleventyDevServer("test-server", "./test/stubs/", getOptions({
+  let server = new DevServer("test-server", "./test/stubs/", getOptions({
     middleware: [
       async function(req, res, next) {
         return next();
@@ -154,7 +150,7 @@ test("Two async middleware", async t => {
       }
     ],
   }));
-  server.serve(8100);
+  server.serve(0);
 
   let data = await makeRequestTo(t, server, "/sample");
   t.true(data.includes("<script "));
@@ -164,7 +160,7 @@ test("Two async middleware", async t => {
 });
 
 test("Async middleware that writes", async t => {
-  let server = new EleventyDevServer("test-server", "./test/stubs/", getOptions({
+  let server = new DevServer("test-server", "./test/stubs/", getOptions({
     // enabled: false,
     middleware: [
       async function(req, res, next) {
@@ -182,7 +178,7 @@ test("Async middleware that writes", async t => {
       },
     ],
   }));
-  server.serve(8100);
+  server.serve(0);
 
   let data = await makeRequestTo(t, server, "/sample");
   t.true(data.includes("<script "));
@@ -192,7 +188,7 @@ test("Async middleware that writes", async t => {
 });
 
 test("Second async middleware that writes", async t => {
-  let server = new EleventyDevServer("test-server", "./test/stubs/", getOptions({
+  let server = new DevServer("test-server", "./test/stubs/", getOptions({
     // enabled: false,
     middleware: [
       async function(req, res, next) {
@@ -219,7 +215,7 @@ test("Second async middleware that writes", async t => {
       },
     ],
   }));
-  server.serve(8100);
+  server.serve(0);
 
   let data = await makeRequestTo(t, server, "/sample");
   t.true(data.includes("<script "));
@@ -230,7 +226,7 @@ test("Second async middleware that writes", async t => {
 
 
 test("Second middleware that consumes first middleware response body, issue #29", async t => {
-  let server = new EleventyDevServer("test-server", "./test/stubs/", getOptions({
+  let server = new DevServer("test-server", "./test/stubs/", getOptions({
     // enabled: false,
     middleware: [
       async function(req, res, next) {
@@ -246,7 +242,7 @@ test("Second middleware that consumes first middleware response body, issue #29"
       },
     ],
   }));
-  server.serve(8100);
+  server.serve(0);
 
   let data = await makeRequestTo(t, server, "/sample");
   t.true(data.includes("<script "));
@@ -256,7 +252,7 @@ test("Second middleware that consumes first middleware response body, issue #29"
 });
 
 test("Two middlewares, end() in the first, skip the second", async t => {
-  let server = new EleventyDevServer("test-server", "./test/stubs/", getOptions({
+  let server = new DevServer("test-server", "./test/stubs/", getOptions({
     // enabled: false,
     middleware: [
       async function(req, res, next) {
@@ -271,7 +267,7 @@ test("Two middlewares, end() in the first, skip the second", async t => {
       },
     ],
   }));
-  server.serve(8100);
+  server.serve(0);
 
   let data = await makeRequestTo(t, server, "/sample");
   t.true(data.includes("<script "));
@@ -282,8 +278,8 @@ test("Two middlewares, end() in the first, skip the second", async t => {
 });
 
 test("Fun unicode paths", async t => {
-  let server = new EleventyDevServer("test-server", "./test/stubs/", getOptions());
-  server.serve(8100);
+  let server = new DevServer("test-server", "./test/stubs/", getOptions());
+  server.serve(0);
 
   let data = await makeRequestTo(t, server, encodeURI(`/zach’s.html`));
   t.true(data.includes("<script "));
@@ -293,7 +289,7 @@ test("Fun unicode paths", async t => {
 });
 
 test("Content-Type header via middleware", async t => {
-  let server = new EleventyDevServer("test-server", "./test/stubs/", getOptions({
+  let server = new DevServer("test-server", "./test/stubs/", getOptions({
     middleware: [
       function (req, res, next) {
         if (/.*\.php$/.test(req.url)) {
@@ -304,7 +300,7 @@ test("Content-Type header via middleware", async t => {
       }
     ]
   }));
-  server.serve(8100);
+  server.serve(0);
 
   let data = await fetchHeadersForRequest(t, server, encodeURI(`/index.php`));
   t.true(data['content-type'] === 'text/html; charset=utf-8');
@@ -313,12 +309,12 @@ test("Content-Type header via middleware", async t => {
 });
 
 test("Content-Range request", async (t) => {
-  let server = new EleventyDevServer(
+  let server = new DevServer(
     "test-server",
     "./test/stubs/",
     getOptions()
   );
-  server.serve(8100);
+  server.serve(0);
 
   const options = { headers: { Range: "bytes=0-48" } };
   let headers = await fetchHeadersForRequest(t, server, `/index.html`, options);
@@ -334,12 +330,12 @@ test("Content-Range request", async (t) => {
 });
 
 test("Content-Range request multiple is handled as full", async (t) => {
-  let server = new EleventyDevServer(
+  let server = new DevServer(
     "test-server",
     "./test/stubs/",
     getOptions()
   );
-  server.serve(8100);
+  server.serve(0);
 
   const options = { headers: { Range: "bytes=0-10,20-30" } };
   let headers = await fetchHeadersForRequest(t, server, `/index.html`, options);
@@ -350,12 +346,12 @@ test("Content-Range request multiple is handled as full", async (t) => {
 });
 
 test("Content-Range request invalid", async (t) => {
-  let server = new EleventyDevServer(
+  let server = new DevServer(
     "test-server",
     "./test/stubs/",
     getOptions()
   );
-  server.serve(8100);
+  server.serve(0);
 
   const options = { headers: { Range: "bytes=xxx" } };
   let data = await fetchHeadersForRequest(t, server, `/index.html`, options);
@@ -366,12 +362,12 @@ test("Content-Range request invalid", async (t) => {
 });
 
 test("Content-Range request invalid reversed", async (t) => {
-  let server = new EleventyDevServer(
+  let server = new DevServer(
     "test-server",
     "./test/stubs/",
     getOptions()
   );
-  server.serve(8100);
+  server.serve(0);
   const options = { headers: { Range: "bytes=100-0" } };
   await t.throwsAsync(() => fetchHeadersForRequest(t, server, `/index.html`, options), {
     instanceOf: Error, message: 'Invalid status code 416'
@@ -380,12 +376,12 @@ test("Content-Range request invalid reversed", async (t) => {
 })
 
 test("Standard request does not include range headers", async (t) => {
-  let server = new EleventyDevServer(
+  let server = new DevServer(
     "test-server",
     "./test/stubs/",
     getOptions()
   );
-  server.serve(8100);
+  server.serve(0);
 
   let data = await fetchHeadersForRequest(t, server, `/index.html`);
   t.false("accept-ranges" in data);
@@ -395,7 +391,7 @@ test("Standard request does not include range headers", async (t) => {
 });
 
 test("Setting default response headers", async (t) => {
-  let server = new EleventyDevServer(
+  let server = new DevServer(
     "test-server",
     "./test/stubs/",
     getOptions({
@@ -405,7 +401,7 @@ test("Setting default response headers", async (t) => {
       }
     })
   );
-  server.serve(8100);
+  server.serve(0);
 
   let data = await fetchHeadersForRequest(t, server, "/index.html");
   t.true(data["access-control-allow-origin"] === "*");
@@ -415,7 +411,7 @@ test("Setting default response headers", async (t) => {
 });
 
 test("Default response headers cannot overwrite content-type", async (t) => {
-  let server = new EleventyDevServer(
+  let server = new DevServer(
     "test-server",
     "./test/stubs/",
     getOptions({
@@ -424,10 +420,10 @@ test("Default response headers cannot overwrite content-type", async (t) => {
       }
     })
   );
-  server.serve(8100);
+  server.serve(0);
 
   let data = await fetchHeadersForRequest(t, server, "/index.html");
-  t.false(data["Content-Type"] === "text/plain");
+  t.true(data["content-type"].startsWith("text/html"));
 
   await server.close();
 });
@@ -442,11 +438,11 @@ function withResolvers() {
 }
 
 test("Web Socket request", async (t) => {
-  let server = new EleventyDevServer("test-server", "./test/stubs/", getOptions());
-  server.serve(8200);
+  let server = new DevServer("test-server", "./test/stubs/", getOptions());
+  server.serve(0);
 
   let port = await server.getPort();
-  t.is(8200, port);
+  t.true(port > 0);
 
   let socket = new WebSocket(`ws://localhost:${port}`);
 
@@ -487,6 +483,50 @@ test("Web Socket request", async (t) => {
   t.is(e2Data.data, "TESTING");
 
   await server.close();  
+});
+
+test("Web Socket buildId, sent on connect and bumped by each reload", async (t) => {
+  let server = new DevServer("test-server", "./test/stubs/", getOptions());
+  server.serve(0);
+
+  let port = await server.getPort();
+
+  let socket = new WebSocket(`ws://localhost:${port}`);
+  let nextMessage = () => {
+    let { promise, resolve } = withResolvers();
+    socket.addEventListener("message", (event) => resolve(JSON.parse(event.data)), { once: true });
+    return promise;
+  };
+
+  let connected = await nextMessage();
+  t.is(connected.status, "connected");
+  // a client reconnecting with this id missed nothing
+  t.is(connected.buildId, server.buildId);
+
+  let reloadedPromise = nextMessage();
+  server.reload({ subtype: "css", files: [] });
+  let reloaded = await reloadedPromise;
+
+  t.is(reloaded.type, "eleventy.reload");
+  t.is(reloaded.buildId, server.buildId);
+  t.not(reloaded.buildId, connected.buildId);
+
+  // a client connecting after the reload sees the new id
+  let socket2 = new WebSocket(`ws://localhost:${port}`);
+  let { promise: reconnectedPromise, resolve } = withResolvers();
+  socket2.addEventListener("message", (event) => resolve(JSON.parse(event.data)), { once: true });
+  let reconnected = await reconnectedPromise;
+  t.is(reconnected.buildId, reloaded.buildId);
+
+  await server.close();
+});
+
+test("Web Socket buildId is unique per server instance", async (t) => {
+  let first = new DevServer("test-server", "./test/stubs/", getOptions());
+  let second = new DevServer("test-server", "./test/stubs/", getOptions());
+
+  // a restart never matches, so clients do reload
+  t.not(first.buildId, second.buildId);
 });
 
 // TODO setup websocket server *without* web server

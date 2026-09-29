@@ -42,6 +42,55 @@ npx @11ty/eleventy-dev-server --no-domdiff
 npx @11ty/eleventy-dev-server --help
 ```
 
+## Server thread
+
+The HTTP server runs on a worker thread by default, so requests stay fast even while a large
+Eleventy build is occupying the main thread. Without it, request latency matches the longest
+uninterrupted synchronous stretch of the build — a build rendering in 200ms chunks makes every
+request wait ~200ms.
+
+Static files, redirects, 404s and the injected client scripts are served entirely from the server
+thread and never touch the main thread. Requests that need your code (`middleware` and `onRequest`,
+which are closures and cannot cross a thread boundary) are handed to the main thread, so those are
+no faster than before — but no slower either.
+
+Opt out with:
+
+```js
+{
+  serverThread: false
+}
+```
+
+## Allowed hosts
+
+Live reload only accepts connections from pages served by the dev server, on `localhost`, `*.localhost`, or an IP address. Add any other hostname you use (e.g. from `/etc/hosts` or a proxy that keeps the `Host` header), with a leading `.` to include subdomains:
+
+```js
+{
+  allowedHosts: ["mysite.test", ".example.test"]
+}
+```
+
+`allowedHosts: true` allows any hostname, which drops protection against DNS rebinding.
+
+## Client API
+
+The injected client is available as `window.BuildAwesomeReload` (alias `window.EleventyReload`; `sendToServer(type, data)` returns `{ id }`) and dispatches these events on `document`:
+
+- `buildawesome:reload` after every rebuild (including in-place morphdom patches), with `detail: { buildId, changed }`. `changed` is `false` when the rebuild didn’t touch the current page.
+- `buildawesome:edit` for edit replies from the server, with `detail` set to the full message: `{ type, id, ok: true, results }` or `{ type, id, ok: false, errors }`. Match `id` against the one returned by `sendToServer`.
+
+```js
+document.addEventListener("buildawesome:reload", (e) => console.log(e.detail.buildId, e.detail.changed));
+```
+
+Add `data-buildawesome-preserve` to an element to keep morphdom from updating or removing it (and its children) during in-place updates (a full page reload still replaces it).
+
+```html
+<div data-buildawesome-preserve><!-- client-rendered content --></div>
+```
+
 ## Tests
 
 ```
@@ -52,5 +101,5 @@ npm run test
 
 ## Changelog
 
-- `v3.0.0` replaces `--domdiff=false` with `--no-domdiff`, bumps Node.js minimum to 22.15, [`chokidar@4` drops support for globs in `watch` option](https://github.com/paulmillr/chokidar#upgrading)
+- `v3.0.0` runs the HTTP server on a worker thread by default (opt out with `serverThread: false`), replaces `--domdiff=false` with `--no-domdiff`, bumps Node.js minimum to 22.15, [`chokidar@4` drops support for globs in `watch` option](https://github.com/paulmillr/chokidar#upgrading)
 - `v2.0.0` bumps Node.js minimum to 18.

@@ -110,16 +110,24 @@ class Util {
   }
 }
 
-class ReloadClient {
+export class ReloadClient {
   #socket;
   #ack = [];
   #ready = false; // swap to Promise.withResolvers
+  #buildId; // specific to one single core build run
 
   static RELOAD_ENABLED = true;
   static PORT_PARAM = "reloadPort";
   static CACHE_BUST_PARAM = "_bust";
   static TAG_NAME = "reload-client";
   static RECONNECT_INTERVAL = 2000; // ms
+  static EVENT_PREFIXES = ["eleventy.", "buildawesome."];
+  static PRESERVE_ATTR = "data-buildawesome-preserve";
+
+  static getEventName(type = "") {
+    let prefix = ReloadClient.EVENT_PREFIXES.find(prefix => type.startsWith(prefix));
+    return prefix ? type.slice(prefix.length) : undefined;
+  }
 
   static isCustomElement(node) {
     return customElements.get(node.tagName.toLowerCase())
@@ -131,9 +139,56 @@ class ReloadClient {
 
   static reload(options = {}) {
     if(!this.RELOAD_ENABLED) {
-      return;
+      return false;
     }
     Util.fullPageReload(options);
+    return true;
+  }
+
+  // Treats `/about`, `/about/`, `/about/index.html`, and percent-encoded forms as the same page.
+  static normalizePath(path = "") {
+    let { pathname } = new URL(path, "http://localhost/");
+    try {
+      pathname = decodeURI(pathname);
+    } catch(e) {
+      // Keep malformed URIs encoded
+    }
+
+    if(pathname.endsWith("/index.html")) {
+      pathname = pathname.slice(0, -"index.html".length);
+    }
+    if(pathname.length > 1 && pathname.endsWith("/")) {
+      pathname = pathname.slice(0, -1);
+    }
+    return pathname;
+  }
+
+  // Returns `{ action: "morph", templates }`, `{ action: "reload", via }`, or `{ action: "none" }` for the default reload type.
+  static getReloadAction(files, build = {}, pathname = "") {
+    let normalizedPathname = this.normalizePath(pathname);
+    let templates = (build?.templates || []).filter(({url, inputPath}) => {
+      // `build.outputs` (newer Eleventy) means templates are already filtered to changed output
+      return this.normalizePath(url) === normalizedPathname && (build?.outputs || (files || []).includes(inputPath));
+    });
+
+    if(templates.length > 0) {
+      // Templates without content mean DOM diffing is disabled on the server
+      if(templates.some(({ content }) => typeof content !== "string")) {
+        return { action: "reload", via: "domdiff disabled" };
+      }
+
+      return { action: "morph", templates };
+    }
+
+    if(!build?.outputs) {
+      return { action: "reload", via: "ineligible domdiff" };
+    }
+
+    if(build.passthrough?.length > 0) {
+      return { action: "reload", via: "passthrough copy" };
+    }
+
+    return { action: "none" };
   }
 
   static reloadTypes = {
@@ -152,8 +207,7 @@ class ReloadClient {
         }
 
         if(!match) {
-          this.reload({ via: "css" });
-          return;
+          return this.reload({ via: "css" });
         }
       }
 
@@ -166,22 +220,24 @@ class ReloadClient {
       }
 
       Util.log(`CSS updated without page reload.`);
+      return true;
     },
     default: async (files, build = {}) => {
       let morphed = false;
-      let domdiffTemplates = (build?.templates || []).filter(({url, inputPath}) => {
-        return url === document.location.pathname && (files || []).includes(inputPath);
-      });
+      let { action, via, templates: domdiffTemplates } = this.getReloadAction(files, build, document.location.pathname);
 
-      // Not eligible for domDiff
-      if(domdiffTemplates.length === 0) {
-        this.reload({ via: "ineligible domdiff"});
-        return;
+      if(action === "none") {
+        Util.log(`No changes to this page.`);
+        return false;
+      }
+
+      if(action === "reload") {
+        return this.reload({ via });
       }
 
       // Temporary
       if(ReloadClient.RELOAD_ENABLED === false) {
-        return;
+        return false;
       }
 
       try {
@@ -200,9 +256,13 @@ class ReloadClient {
               if((node?.tagName || "").toLowerCase() === "link") {
                 return false;
               }
+
+              if(node?.hasAttribute?.(ReloadClient.PRESERVE_ATTR)) {
+                return false;
+              }
             },
             onBeforeElUpdated: (fromEl, toEl) => {
-              if(fromEl.hasAttribute("inert")) {
+              if(fromEl.hasAttribute("inert") || fromEl.hasAttribute(ReloadClient.PRESERVE_ATTR)) {
                 return false;
               }
 
@@ -257,8 +317,10 @@ class ReloadClient {
       }
 
       if (!morphed) {
-        this.reload({ via: "no domdiff content received" });
+        return this.reload({ via: "no domdiff content received" });
       }
+
+      return true;
     }
   }
 
@@ -266,6 +328,13 @@ class ReloadClient {
     this.reconnectInterval = ReloadClient.RECONNECT_INTERVAL;
     this.connectionMessageShown = false;
     this.reconnectEventCallback = this.reconnect.bind(this);
+
+    // bfcache restores resume with a closed socket: reconnect now, don’t wait on the timer.
+    window.addEventListener("pageshow", (event) => {
+      if(event.persisted && this.#socket?.readyState !== WebSocket.OPEN) {
+        this.reconnect(event);
+      }
+    });
   }
 
   get socket() {
@@ -300,24 +369,30 @@ class ReloadClient {
         let data = JSON.parse(event.data);
         // Util.log( JSON.stringify(data, null, 2) );
 
-        let { type } = data;
+        let type = ReloadClient.getEventName(data.type);
 
-        if (type === "eleventy.reload") {
+        if (type === "reload") {
           await this.onreload(data);
-        } else if (type === "eleventy.msg") {
+        } else if (type === "msg") {
           Util.log(`${data.message}`);
-        } else if (type === "eleventy.error") {
+        } else if (type === "error") {
           // Log Eleventy build errors
           // Extra parsing for Node Error objects
           let e = JSON.parse(data.error);
           Util.error(`Build error: ${e.message}`, e);
-        } else if (type === "eleventy.status") {
-          // Full page reload on initial reconnect
+        } else if (type === "status") {
+          // A reconnect may have missed builds, but usually hasn’t—only reload if the
+          // server moved on. No `buildId` (older server) reloads unconditionally, as before.
           if (data.status === "connected" && options.mode === "reconnect") {
-            ReloadClient.reload({ via: "reconnect"});
+            if(!this.#buildId || !data.buildId || this.#buildId !== data.buildId) {
+              ReloadClient.reload({ via: "reconnect"});
+            } else {
+              Util.log(`Reconnected without page reload.`);
+            }
           }
 
           if(data.status === "connected") {
+            this.#buildId = data.buildId;
             // With multiple windows, only show one connection message
             if(!this.isConnected) {
               Util.log(Util.capitalize(data.status));
@@ -333,9 +408,12 @@ class ReloadClient {
 
             Util.log(Util.capitalize(data.status));
           }
-        } else if(type === "eleventy.edit") {
-          // TODO edits received from other clients
-        } else if(type === "eleventy.ack") {
+        } else if(type === "edit") {
+          // Forward server replies only (not requests echoed from other windows)
+          if("ok" in data && !data.edits) {
+            document.dispatchEvent(new CustomEvent("buildawesome:edit", { detail: data }));
+          }
+        } else if(type === "ack") {
           // acknowledge that a message has been received for removal on client
           for(let ackFn of this.#ack) {
             if(typeof ackFn) {
@@ -372,12 +450,24 @@ class ReloadClient {
     this.init({ mode: "reconnect" });
   }
 
-  async onreload({ subtype, files, build }) {
+  async onreload({ subtype, files, build, buildId }) {
+    this.#buildId = buildId;
+
+    // A page this build moved (e.g. its permalink changed): go where it is now, not back to where it was
+    let redirect = (build?.redirects || []).find(({ from }) => from === document.location.pathname);
+    if(redirect) {
+      document.location.assign(redirect.to);
+      return;
+    }
+
     if(!ReloadClient.reloadTypes[subtype]) {
       subtype = "default";
     }
 
-    await ReloadClient.reloadTypes[subtype](files, build);
+    let changed = Boolean(await ReloadClient.reloadTypes[subtype](files, build));
+
+    // Morphdom patches skip page reloads, so let page scripts know a rebuild was applied (`changed` is false when this page was untouched)
+    document.dispatchEvent(new CustomEvent("buildawesome:reload", { detail: { buildId, changed } }));
   }
 
   addReconnectListeners(delay = 0) {
@@ -422,8 +512,12 @@ class ReloadClient {
   }
 }
 
-let reloader = new ReloadClient();
-reloader.init();
+// Skipped outside the browser (e.g. when imported by tests)
+if(typeof window !== "undefined") {
+  let reloader = new ReloadClient();
+  reloader.init();
 
-// Backwards compat
-window.EleventyReload = reloader;
+  // Backwards compat
+  window.EleventyReload = reloader;
+  window.BuildAwesomeReload = reloader;
+}
