@@ -316,13 +316,14 @@ class ServerThread {
 
     let updateServer = new WebSocketServer(options);
     updateServer.on("connection", (ws) => {
+      // Update the count before the client hears it's connected
+      parentPort.postMessage({ type: "clientCount", size: updateServer.clients.size });
+
       this.broadcast({
         type: "eleventy.status",
         status: "connected",
         buildId: this.#buildId,
       }, ws);
-
-      parentPort.postMessage({ type: "clientCount", size: updateServer.clients.size });
 
       ws.on("close", () => {
         parentPort.postMessage({ type: "clientCount", size: updateServer.clients.size });

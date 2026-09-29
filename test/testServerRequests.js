@@ -446,43 +446,52 @@ test("Web Socket request", async (t) => {
 
   let socket = new WebSocket(`ws://localhost:${port}`);
 
-  let promises = [];
-  promises.push(withResolvers());
-  promises.push(withResolvers());
+  try {
+    let promises = [];
+    promises.push(withResolvers());
+    promises.push(withResolvers());
 
-  socket.addEventListener("message", (event) => {
-    promises[0].resolve(event);
-  }, {
-    once: true
-  });
-  let e1 = await promises[0].promise;
-  let e1Data = JSON.parse(e1.data);
+    socket.addEventListener("message", (event) => {
+      promises[0].resolve(event);
+    }, {
+      once: true
+    });
+    let e1 = await promises[0].promise;
+    let e1Data = JSON.parse(e1.data);
 
-  socket.addEventListener("message", (event) => {
-    promises[1].resolve(event);
-  }, {
-    once: true
-  });
+    socket.addEventListener("message", (event) => {
+      promises[1].resolve(event);
+    }, {
+      once: true
+    });
 
-  server.sendUpdateNotification({
-    type: "eleventy.msg",
-    data: "TESTING"
-  });
+    server.sendUpdateNotification({
+      type: "eleventy.msg",
+      data: "TESTING"
+    });
 
-  let e2 = await promises[1].promise;
-  let e2Data = JSON.parse(e2.data);
+    let e2 = await promises[1].promise;
+    let e2Data = JSON.parse(e2.data);
 
-  t.is( server.updateServer?.clients?.size, 1);
-  t.truthy(e1Data);
-  t.truthy(e2Data);
+    // The server thread reports its client count asynchronously
+    let deadline = Date.now() + 2000;
+    while(server.updateServer?.clients?.size !== 1 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
 
-  t.is(e1Data.type, "eleventy.status");
-  t.is(e1Data.status, "connected");
+    t.is( server.updateServer?.clients?.size, 1);
+    t.truthy(e1Data);
+    t.truthy(e2Data);
 
-  t.is(e2Data.type, "eleventy.msg");
-  t.is(e2Data.data, "TESTING");
+    t.is(e1Data.type, "eleventy.status");
+    t.is(e1Data.status, "connected");
 
-  await server.close();  
+    t.is(e2Data.type, "eleventy.msg");
+    t.is(e2Data.data, "TESTING");
+  } finally {
+    socket.close();
+    await server.close();
+  }
 });
 
 test("Web Socket buildId, sent on connect and bumped by each reload", async (t) => {
