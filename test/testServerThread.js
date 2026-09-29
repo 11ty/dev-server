@@ -493,3 +493,68 @@ test("Encoded traversal to a sibling directory is refused in both modes", async 
   t.false(threaded.body.includes("SECRET"));
   t.false(single.body.includes("SECRET"));
 });
+
+async function requestThenSample(server, path) {
+  let failed = await sendRequest(server, path);
+  let after = await sendRequest(server, "/sample");
+  return { failed, after };
+}
+
+test("A throwing middleware responds with 500 in both modes", async (t) => {
+  let options = {
+    middleware: [
+      function(req, res, next) {
+        if(req.url === "/boom") {
+          throw new Error("middleware exploded");
+        }
+        next();
+      },
+    ],
+  };
+
+  let results = await inBothModes(options, (server) => requestThenSample(server, "/boom"));
+
+  for(let { failed, after } of Object.values(results)) {
+    t.is(failed.statusCode, 500);
+    t.is(after.statusCode, 200);
+  }
+});
+
+test("A rejection after an un-awaited next() responds with 500 in both modes", async (t) => {
+  let options = {
+    middleware: [
+      async function(req, res, next) {
+        next();
+      },
+      async function(req, res, next) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        if(req.url === "/boom") {
+          throw new Error("async middleware exploded");
+        }
+        next();
+      },
+    ],
+  };
+
+  let results = await inBothModes(options, (server) => requestThenSample(server, "/boom"));
+
+  for(let { failed, after } of Object.values(results)) {
+    t.is(failed.statusCode, 500);
+    t.is(after.statusCode, 200);
+  }
+});
+
+test("An invalid onRequest return value responds with 500 in both modes", async (t) => {
+  let options = {
+    onRequest: {
+      "/bad": () => 42,
+    },
+  };
+
+  let results = await inBothModes(options, (server) => requestThenSample(server, "/bad"));
+
+  for(let { failed, after } of Object.values(results)) {
+    t.is(failed.statusCode, 500);
+    t.is(after.statusCode, 200);
+  }
+});

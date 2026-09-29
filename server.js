@@ -443,16 +443,30 @@ export default class DevServer {
     // Runs very first in the middleware chain
     middlewares.push(this.devServerMiddleware);
 
+    let handleError = (e) => {
+      this.logger.error(`Server error: ${e.message}`);
+      if(!res.bodyUsed) {
+        if(!res.headersSent) {
+          res.statusCode = 500;
+        }
+        res.end("");
+      }
+    };
+
     let bound = [];
     let next;
 
     for(let ware of middlewares) {
-      let fn;
-      if(next) {
-        fn = ware.bind(this, req, res, next);
-      } else {
-        fn = ware.bind(this, req, res);
-      }
+      let args = next ? [req, res, next] : [req, res];
+      // Middleware call `next()` without awaiting it, so each one catches its own errors
+      let fn = () => {
+        try {
+          let result = ware.call(this, ...args);
+          return typeof result?.catch === "function" ? result.catch(handleError) : result;
+        } catch(e) {
+          handleError(e);
+        }
+      };
       bound.push(fn);
       next = fn;
     }
