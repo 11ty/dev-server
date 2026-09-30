@@ -129,6 +129,7 @@ export class ReloadClient {
   static MAX_RECONNECT_INTERVAL = 5000; // ms, so a restarted server is found quickly without a focus or visibility change
   static EVENT_PREFIXES = ["eleventy.", "buildawesome."];
   static PRESERVE_ATTR = "data-buildawesome-preserve";
+  static BEFORE_RELOAD_TIMEOUT = 1000; // ms
 
   static getEventName(type = "") {
     let prefix = ReloadClient.EVENT_PREFIXES.find(prefix => type.startsWith(prefix));
@@ -210,6 +211,26 @@ export class ReloadClient {
     }
 
     return { action: "none" };
+  }
+
+  // Lets page scripts prepare for an in-place update, waiting at most `BEFORE_RELOAD_TIMEOUT` for their promises.
+  static async dispatchBeforeReload(buildId) {
+    let promises = [];
+    document.dispatchEvent(new CustomEvent("buildawesome:beforereload", {
+      detail: {
+        buildId,
+        waitUntil: (promise) => promises.push(promise),
+      },
+    }));
+
+    if(promises.length > 0) {
+      let timer;
+      await Promise.race([
+        Promise.allSettled(promises),
+        new Promise(resolve => timer = setTimeout(resolve, ReloadClient.BEFORE_RELOAD_TIMEOUT)),
+      ]);
+      clearTimeout(timer);
+    }
   }
 
   static reloadTypes = {
@@ -480,6 +501,10 @@ export class ReloadClient {
 
     if(!ReloadClient.reloadTypes[subtype]) {
       subtype = "default";
+    }
+
+    if(subtype === "default" && build?.outputs && ReloadClient.getReloadAction(files, build, document.location.pathname).action === "morph") {
+      await ReloadClient.dispatchBeforeReload(buildId);
     }
 
     let changed = Boolean(await ReloadClient.reloadTypes[subtype](files, build));
