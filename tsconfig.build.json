@@ -8,5 +8,5 @@
     "outDir": "types"
   },
   "include": [],
-  "files": ["server.js"]
+  "files": ["server.js", "client/reload-client.js"]
 }
