@@ -18,7 +18,7 @@ import wrapResponse from "./server/wrapResponse.js";
 import ipAddress from "./server/ipAddress.js";
 import StaticFiles from "./server/staticFiles.js";
 import { isPortInUse, portInUseError } from "./server/portCheck.js";
-import { parseClientMessage, isConnectionAllowed } from "./server/clientConnection.js";
+import { parseClientMessage, isConnectionAllowed, registerConnection, getConnection, sendReloadByPage } from "./server/clientConnection.js";
 
 const require = createRequire(import.meta.url);
 
@@ -38,7 +38,7 @@ const debug = createDebug("Eleventy:DevServer");
  * @typedef {string | Response | { status?: number, headers?: Record<string, string> | Headers, body?: string } | undefined | null | false} OnRequestResult
  * @typedef {(context: { url: URL, pattern: URLPattern, patternGroups: Record<string, string | undefined> }) => OnRequestResult | Promise<OnRequestResult>} OnRequestHandler
  * @typedef {{ info(...args: unknown[]): void, log(...args: unknown[]): void, error(...args: unknown[]): void }} Logger
- * @typedef {{ id: string, type: string, data: unknown, timestamp: number }} ClientMessage
+ * @typedef {{ id: string, type: string, data: unknown, timestamp: number, clientId: string }} ClientMessage `clientId` identifies the sending tab for `sendUpdateNotification`.
  * @typedef {{ hosts: string[], localhostUrl: string, startupTime: number, version: string, options: Record<string, any> }} StartMessageData
  * @typedef {{ url: string, inputPath: string, outputPath?: string, content?: string }} BuildTemplate
  * @typedef {{
@@ -1043,7 +1043,9 @@ export default class DevServer {
     };
 
     let updateServer = new WebSocketServer(options);
-    updateServer.on("connection", (ws) => {
+    updateServer.on("connection", (ws, req) => {
+      let { clientId } = registerConnection(ws, req);
+
       this.sendUpdateNotification({
         type: "eleventy.status",
         status: "connected",
@@ -1060,11 +1062,11 @@ export default class DevServer {
           this.sendUpdateNotification({
             type: "eleventy.ack",
             id: parsed.id,
-          })
+          }, { include: ws });
         }
 
         if(typeof this.options.onClientMessage === "function") {
-          this.options.onClientMessage(parsed);
+          this.options.onClientMessage(Object.assign({}, parsed, { clientId }));
         }
       });
     });
@@ -1085,16 +1087,16 @@ export default class DevServer {
     return this.#updateServer;
   }
 
-  // Broadcasts to all open browser windows
   /**
-   * Sends a message to every open page.
+   * Sends a message to every open page, or only to the one with `clientId` (from `onClientMessage`).
    * @param {Record<string, unknown>} obj
-   * @param {{ include?: unknown }} [options] Only send to this client.
+   * @param {{ clientId?: string, include?: unknown, byPage?: boolean }} [options] `include` and `byPage` are internal.
    */
   sendUpdateNotification(obj, options = {}) {
+    let { clientId, include, byPage } = options;
     if(this.isThreaded) {
       // Serialized here: structured clone throws on values JSON drops (e.g. functions in template `data`)
-      this.#worker?.postMessage({ type: "broadcast", json: JSON.stringify(obj), buildId: obj.buildId });
+      this.#worker?.postMessage({ type: "broadcast", json: JSON.stringify(obj), buildId: obj.buildId, clientId, byPage });
       return;
     }
 
@@ -1102,8 +1104,15 @@ export default class DevServer {
       return;
     }
 
-    let { include } = options;
+    if(byPage) {
+      sendReloadByPage(this.#updateServer.clients, obj, WebSocket.OPEN);
+      return;
+    }
+
     for(let client of this.#updateServer.clients) {
+      if(clientId && getConnection(client)?.clientId !== clientId) {
+        continue;
+      }
       if ((!include || include === client) && client.readyState === WebSocket.OPEN) {
         client.send(JSON.stringify(obj));
       }
@@ -1357,12 +1366,13 @@ export default class DevServer {
 
     this.#buildCount++;
 
+    // With `build.outputs`, each tab only gets the templates for its own page.
     this.sendUpdateNotification({
       type: "eleventy.reload",
       subtype,
       files,
       build,
       buildId: this.buildId,
-    });
+    }, { byPage: Boolean(build?.outputs) });
   }
 }

@@ -9,7 +9,7 @@ import WebSocket, { WebSocketServer } from "ws";
 
 import StaticFiles from "./staticFiles.js";
 import { isPortInUse, portInUseError } from "./portCheck.js";
-import { parseClientMessage, isConnectionAllowed } from "./clientConnection.js";
+import { parseClientMessage, isConnectionAllowed, registerConnection, getConnection, sendReloadByPage } from "./clientConnection.js";
 import wrapResponse from "./wrapResponse.js";
 
 // Built into Node 24+, and kept out of the generated types
@@ -330,7 +330,9 @@ class ServerThread {
     };
 
     let updateServer = new WebSocketServer(options);
-    updateServer.on("connection", (ws) => {
+    updateServer.on("connection", (ws, req) => {
+      let { clientId } = registerConnection(ws, req);
+
       // Update the count before the client hears it's connected
       parentPort.postMessage({ type: "clientCount", size: updateServer.clients.size });
 
@@ -355,10 +357,10 @@ class ServerThread {
           this.broadcast({
             type: "eleventy.ack",
             id: parsed.id,
-          });
+          }, ws);
         }
 
-        parentPort.postMessage({ type: "clientMessage", parsed });
+        parentPort.postMessage({ type: "clientMessage", parsed: Object.assign({}, parsed, { clientId }) });
       });
     });
 
@@ -373,11 +375,14 @@ class ServerThread {
     this.#broadcastJson(JSON.stringify(obj), include);
   }
 
-  #broadcastJson(json, include) {
+  #broadcastJson(json, include, clientId) {
     if(!this.#updateServer?.clients) {
       return;
     }
     for(let client of this.#updateServer.clients) {
+      if(clientId && getConnection(client)?.clientId !== clientId) {
+        continue;
+      }
       if((!include || include === client) && client.readyState === WebSocket.OPEN) {
         client.send(json);
       }
@@ -438,7 +443,11 @@ class ServerThread {
       if(msg.buildId) {
         this.#buildId = msg.buildId;
       }
-      this.#broadcastJson(msg.json);
+      if(msg.byPage) {
+        sendReloadByPage(this.#updateServer?.clients || [], JSON.parse(msg.json), WebSocket.OPEN);
+      } else {
+        this.#broadcastJson(msg.json, undefined, msg.clientId);
+      }
     } else if(msg.type === "aliases") {
       this.#staticFiles.setAliases(msg.aliases);
     } else if(msg.type === "close") {

@@ -424,7 +424,7 @@ test("Reloads with values that can't be cloned reach clients", async (t) => {
   server.serve(0);
   let port = await server.getPort();
 
-  let socket = new WebSocket(`ws://localhost:${port}`);
+  let socket = new WebSocket(`ws://localhost:${port}/?page=/`);
   let messages = [];
   let reloadMessage = new Promise((resolve) => {
     socket.addEventListener("message", (event) => {

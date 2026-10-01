@@ -144,10 +144,11 @@ export class ReloadClient {
     ReloadClient.RELOAD_ENABLED = Boolean(enabled);
   }
 
-  // The page’s host (or `reloadPort`), at the path above this script’s folder so `pathPrefix` is kept.
+  // The page’s host (or `reloadPort`), at the path above this script’s folder so `pathPrefix` is kept, with `?page=` so the server can scope reloads.
   static getSocketUrl(documentHref, scriptHref) {
     let scriptUrl = new URL(scriptHref);
     let url = new URL(new URL("..", scriptUrl).pathname, documentHref);
+    url.searchParams.set("page", new URL(documentHref).pathname);
 
     let reloadPort = scriptUrl.searchParams.get(ReloadClient.PORT_PARAM);
     if(reloadPort) {

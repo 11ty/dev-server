@@ -119,6 +119,14 @@ document.addEventListener("buildawesome:reload", (e) => console.log(e.detail.bui
 document.addEventListener("buildawesome:beforereload", (e) => e.detail.waitUntil(saveState()));
 ```
 
+Messages passed to the `onClientMessage` server option include a `clientId` for the sending tab. Pass it to `sendUpdateNotification` to reply to that tab only:
+
+```js
+onClientMessage(message) {
+  server.sendUpdateNotification({ type: "buildawesome.msg", message: "Hi" }, { clientId: message.clientId });
+}
+```
+
 Add `data-buildawesome-preserve` to an element to keep morphdom from updating or removing it (and its children) during in-place updates (a full page reload still replaces it).
 
 ```html

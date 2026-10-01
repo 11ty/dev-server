@@ -1,7 +1,8 @@
 import test from "ava";
 import WebSocket from "ws";
 import DevServer from "../server.js";
-import { parseClientMessage, isHostnameAllowed, isConnectionAllowed } from "../server/clientConnection.js";
+import { parseClientMessage, isHostnameAllowed, isConnectionAllowed, normalizePath, getReloadForPage } from "../server/clientConnection.js";
+import { ReloadClient } from "../client/reload-client.js";
 
 test("parseClientMessage only returns JSON objects", (t) => {
   t.deepEqual(parseClientMessage(Buffer.from(`{"id":1}`)), { id: 1 });
@@ -47,8 +48,9 @@ test("isConnectionAllowed", (t) => {
   t.false(isConnectionAllowed({ origin: "https://evil.example", host: "localhost:8080" }, true));
 });
 
-function getServer(serverThread) {
+function getServer(serverThread, options = {}) {
   let server = new DevServer("test-server", "./test/stubs/", {
+    ...options,
     serverThread,
     portReassignmentRetryCount: 100,
     logger: { info() {}, log() {}, error() {} },
@@ -56,6 +58,62 @@ function getServer(serverThread) {
   server.serve(0);
   return server;
 }
+
+// Resolves with the next message matching `type`.
+function nextMessage(ws, type) {
+  return new Promise((resolve) => {
+    let onMessage = (data) => {
+      let message = JSON.parse(data.toString());
+      if(message.type === type) {
+        ws.off("message", onMessage);
+        resolve(message);
+      }
+    };
+    ws.on("message", onMessage);
+  });
+}
+
+// Opens a socket for `page` and waits for its connection status.
+async function connectPage(port, page) {
+  let ws = new WebSocket(`ws://localhost:${port}/?page=${encodeURIComponent(page)}`, { origin: `http://localhost:${port}` });
+  await nextMessage(ws, "eleventy.status");
+  return ws;
+}
+
+test("normalizePath matches the client", (t) => {
+  for(let path of ["/", "/index.html", "/about", "/about/", "/about/index.html", "/caf%C3%A9/", "/café/", "/about.html"]) {
+    t.is(normalizePath(path), ReloadClient.normalizePath(path));
+  }
+});
+
+test("getReloadForPage keeps only this page’s templates", (t) => {
+  let obj = {
+    type: "eleventy.reload",
+    files: ["./about.njk"],
+    buildId: "b1",
+    build: {
+      outputs: true,
+      stylesheets: ["/style.css"],
+      passthrough: [],
+      redirects: [],
+      templates: [
+        { url: "/", content: "Home" },
+        { url: "/about/", content: "About" },
+        { url: false, content: "No permalink" },
+      ],
+    },
+  };
+
+  let about = getReloadForPage(obj, "/about");
+  t.deepEqual(about.build.templates, [{ url: "/about/", content: "About" }]);
+  t.deepEqual({ ...about.build, templates: undefined }, { ...obj.build, templates: undefined });
+  t.is(about.files, obj.files);
+  t.is(about.buildId, "b1");
+
+  t.deepEqual(getReloadForPage(obj, "/missing").build.templates, []);
+  t.deepEqual(getReloadForPage(obj, undefined).build.templates, []);
+  t.is(obj.build.templates.length, 3);
+});
 
 function connect(port, options) {
   return new Promise((resolve) => {
@@ -106,6 +164,106 @@ for(let serverThread of [true, false]) {
 
     t.is(ack.id, "after");
     ws.close();
+    await server.close();
+  });
+
+  test(`Reloads with build.outputs only send each tab its own templates (${mode})`, async (t) => {
+    let server = getServer(serverThread);
+    let port = await server.getPort();
+
+    let home = await connectPage(port, "/index.html");
+    let about = await connectPage(port, "/about");
+    let other = await connectPage(port, "/other/");
+
+    let reloads = Promise.all([home, about, other].map(ws => nextMessage(ws, "eleventy.reload")));
+    server.reload({
+      files: ["./_data/site.json"],
+      build: {
+        outputs: true,
+        stylesheets: [],
+        passthrough: [],
+        templates: [
+          { url: "/", inputPath: "./index.njk", content: "Home" },
+          { url: "/about/", inputPath: "./about.njk", content: "About" },
+        ],
+      },
+    });
+
+    let [homeReload, aboutReload, otherReload] = await reloads;
+    t.deepEqual(homeReload.build.templates.map(({ content }) => content), ["Home"]);
+    t.deepEqual(aboutReload.build.templates.map(({ content }) => content), ["About"]);
+    t.deepEqual(otherReload.build.templates, []);
+    t.deepEqual(otherReload.files, ["./_data/site.json"]);
+    t.true(otherReload.build.outputs);
+    t.is(otherReload.buildId, homeReload.buildId);
+
+    for(let ws of [home, about, other]) {
+      ws.close();
+    }
+    await server.close();
+  });
+
+  test(`Reloads without build.outputs are broadcast unchanged (${mode})`, async (t) => {
+    let server = getServer(serverThread);
+    let port = await server.getPort();
+
+    let home = await connectPage(port, "/");
+    let about = await connectPage(port, "/about/");
+
+    let reloads = Promise.all([home, about].map(ws => nextMessage(ws, "eleventy.reload")));
+    server.reload({
+      files: ["./index.njk", "./about.njk"],
+      build: {
+        templates: [
+          { url: "/", inputPath: "./index.njk", content: "Home" },
+          { url: "/about/", inputPath: "./about.njk", content: "About" },
+        ],
+      },
+    });
+
+    for(let reload of await reloads) {
+      t.deepEqual(reload.build.templates.map(({ url }) => url), ["/", "/about/"]);
+    }
+
+    home.close();
+    about.close();
+    await server.close();
+  });
+
+  test(`Client messages carry a clientId for targeted replies (${mode})`, async (t) => {
+    let received;
+    let clientMessage = new Promise((resolve) => { received = resolve; });
+    let server = getServer(serverThread, { onClientMessage: (message) => received(message) });
+    let port = await server.getPort();
+
+    let sender = await connectPage(port, "/");
+    let bystander = await connectPage(port, "/");
+
+    let bystanderAck = false;
+    bystander.on("message", (data) => {
+      if(JSON.parse(data.toString()).type === "eleventy.ack") {
+        bystanderAck = true;
+      }
+    });
+
+    let senderAck = nextMessage(sender, "eleventy.ack");
+    sender.send(JSON.stringify({ id: "m1", type: "hello", data: {}, timestamp: Date.now() }));
+    let message = await clientMessage;
+    await senderAck;
+    t.is(message.type, "hello");
+    t.is(typeof message.clientId, "string");
+
+    let senderReply = nextMessage(sender, "eleventy.msg");
+    let bystanderMessage = nextMessage(bystander, "eleventy.msg");
+    server.sendUpdateNotification({ type: "eleventy.msg", message: "reply" }, { clientId: message.clientId });
+    server.sendUpdateNotification({ type: "eleventy.msg", message: "everyone" });
+
+    t.is((await senderReply).message, "reply");
+    t.is((await bystanderMessage).message, "everyone");
+    t.false(bystanderAck);
+
+    sender.close();
+    bystander.close();
     await server.close();
   });
 }
