@@ -81,11 +81,11 @@ const DEFAULT_OPTIONS = {
   encoding: /** @type {BufferEncoding} */ ("utf-8"),
   /** Virtual base directory for the served files (may be set by Eleventy). */
   pathPrefix: "/",
-  /** Globs to watch with the dev server’s own watcher. */
+  /** Files or directories to watch with the dev server’s own watcher (no globs). */
   watch: /** @type {string[]} */ ([]),
   /** Options for the dev server’s own watcher. */
   chokidarOptions: /** @type {ChokidarOptions} */ ({}),
-  /** Watcher instance to use instead of `watch` and `chokidarOptions`. */
+  /** Additional watcher instance whose events also trigger reloads. */
   chokidar: /** @type {FSWatcher | undefined} */ (undefined),
   /** Maps URLs to files outside the served directory. */
   aliases: /** @type {Record<string, string>} */ ({}),
@@ -173,6 +173,7 @@ const MAX_WORKER_RESTARTS = 5;
 
 export default class DevServer {
   #watcher;
+  #externalWatcher;
   #serverClosing;
   #serverState;
   #readyPromise;
@@ -294,59 +295,86 @@ export default class DevServer {
     this.#staticFiles?.setOptions(this.options);
   }
 
+  /** @param {string[]} targets */
+  #assertNoGlobs(targets) {
+    for(let target of targets) {
+      if(typeof target === "string" && /[*?[\]{}!]/.test(target)) {
+        throw new Error(`Glob patterns are not supported in the Dev Server \`watch\` option (received "${target}"). Pass file or directory paths instead, e.g. use Node’s built-in globbing (Node 22.17+ stable):
+
+  import { globSync } from "node:fs";
+  eleventyConfig.setServerOptions({
+    watch: globSync("${target}"),
+  });
+
+Note: globs resolved this way are evaluated once at startup; watch a directory (e.g. "_site/styles/") to pick up newly added files.`);
+      }
+    }
+  }
+
+  /** @param {FSWatcher} watcher */
+  #addWatcherListeners(watcher) {
+    watcher.on("change", (path) => {
+      this.logger.log( `File changed: ${path} (skips build)` );
+      this.reloadFiles([path]);
+    });
+
+    watcher.on("add", (path) => {
+      this.logger.log( `File added: ${path} (skips build)` );
+      this.reloadFiles([path]);
+    });
+
+    watcher.on("unlink", (path) => {
+      this.logger.log( `File deleted: ${path} (skips build)` );
+      this.reloadFiles([path]);
+    });
+  }
+
   /** @returns {FSWatcher} */
   get watcher() {
     if(this.#watcher) {
       return this.#watcher;
     }
 
+    this.#assertNoGlobs(this.options.watch);
+
     debug("Watching files: %O", this.options.watch);
-    if(!this.options.chokidar) {
-      this.#watcher = chokidar.watch(this.options.watch, Object.assign({
-        ignoreInitial: true,
+    this.#watcher = chokidar.watch(this.options.watch, Object.assign({
+      ignoreInitial: true,
 
-        ignored: ["**/node_modules/**", ".git"],
+      ignored: ["**/node_modules/**", ".git"],
 
-        // same values as Eleventy core
-        awaitWriteFinish: {
-          stabilityThreshold: 150,
-          pollInterval: 25,
-        },
-      }, this.options.chokidarOptions));
-    } else {
-      this.#watcher = this.options.chokidar;
-    }
+      // same values as Eleventy core
+      awaitWriteFinish: {
+        stabilityThreshold: 150,
+        pollInterval: 25,
+      },
+    }, this.options.chokidarOptions));
 
-    this.#watcher.on("change", (path) => {
-      this.logger.log( `File changed: ${path} (skips build)` );
-      this.reloadFiles([path]);
-    });
-
-    this.#watcher.on("add", (path) => {
-      this.logger.log( `File added: ${path} (skips build)` );
-      this.reloadFiles([path]);
-    });
-
-    this.#watcher.on("unlink", (path) => {
-      this.logger.log( `File deleted: ${path} (skips build)` );
-      this.reloadFiles([path]);
-    });
+    this.#addWatcherListeners(this.#watcher);
 
     return this.#watcher;
   }
 
   /** @internal */
   getWatcher() {
-    // only initialize watcher if watcher via getWatcher if has targets
-    // this.watcher in watchFiles() is a manual workaround
-    if(this.options.watch.length > 0 || this.options.chokidar) {
+    let external = this.options.chokidar;
+    if(external && this.#externalWatcher !== external) {
+      this.#externalWatcher = external;
+      this.#addWatcherListeners(external);
+    }
+
+    // only initialize the server-owned watcher if it has targets, watchFiles() also creates it
+    if(this.options.watch.length > 0) {
       return this.watcher;
     }
+
+    return this.#watcher || this.#externalWatcher;
   }
 
   /** @param {string[]} targets */
   watchFiles(targets) {
     if(Array.isArray(targets) && targets.length > 0) {
+      this.#assertNoGlobs(targets);
       debug("Also watching: %O", targets);
       this.watcher.add(targets);
     }
@@ -1202,6 +1230,11 @@ export default class DevServer {
     if(this.#watcher) {
       promises.push(this.#watcher.close());
       this.#watcher = undefined;
+    }
+
+    if(this.#externalWatcher) {
+      promises.push(this.#externalWatcher.close());
+      this.#externalWatcher = undefined;
     }
 
     this.#serverClosing = Promise.all(promises).then(() => {
