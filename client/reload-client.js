@@ -234,6 +234,116 @@ export class ReloadClient {
     }
   }
 
+  // Returns a `:nth-of-type` path from the nearest ancestor-or-self with an `id` (or from `<html>`).
+  static getFocusPath(el, doc = document) {
+    let steps = [];
+    let node = el;
+    while(node && node !== doc.documentElement && !node.id) {
+      let parent = node.parentElement;
+      if(!parent) {
+        return;
+      }
+      let index = [...parent.children].filter(child => child.tagName === node.tagName).indexOf(node) + 1;
+      steps.unshift(`${node.tagName.toLowerCase()}:nth-of-type(${index})`);
+      node = parent;
+    }
+    if(!node) {
+      return;
+    }
+    return { id: node.id || undefined, selector: steps.join(" > ") || undefined };
+  }
+
+  /** @param {{ id?: string, selector?: string }} path */
+  static findByFocusPath({ id, selector }, doc = document) {
+    let root = id ? doc.getElementById(id) : doc.documentElement;
+    if(!root || !selector) {
+      return root;
+    }
+    return root.querySelector(`:scope > ${selector}`);
+  }
+
+  static isTextControl(el) {
+    return ["INPUT", "TEXTAREA"].includes(el?.tagName);
+  }
+
+  // Records what has focus so it can be restored after morphdom replaces it.
+  static captureFocus(doc = document) {
+    let element = /** @type {any} */ (doc.activeElement);
+    if(!element || element === doc.body) {
+      return;
+    }
+
+    /** @type {Record<string, any>} */
+    let state = {
+      element,
+      tagName: element.tagName,
+      path: this.getFocusPath(element, doc),
+      // Survives the structural changes that make morphdom replace an element.
+      tagIndex: [...doc.getElementsByTagName(element.localName)].indexOf(element),
+      // Inner shadow DOM nodes have no path; only the host is found again.
+      shadowElement: element.shadowRoot?.activeElement || undefined,
+    };
+
+    if(this.isTextControl(element) && typeof element.selectionStart === "number") {
+      let { selectionStart, selectionEnd, selectionDirection } = element;
+      state.selection = { selectionStart, selectionEnd, selectionDirection };
+    }
+
+    return state;
+  }
+
+  static isFocusLost(doc = document) {
+    return !doc.activeElement || doc.activeElement === doc.body;
+  }
+
+  static focusElement(el) {
+    try {
+      el.focus({ preventScroll: true });
+    } catch(e) {
+      // Custom elements may throw before their first render (e.g. Web Awesome’s `focus()` uses a not-yet-rendered input)
+    }
+  }
+
+  // Refocuses the recorded element (or its same-tag replacement) unless something else has focus now.
+  static async restoreFocus(state, doc = document) {
+    if(!state || !this.isFocusLost(doc)) {
+      return;
+    }
+
+    let target = state.element;
+    if(!target.isConnected) {
+      target = state.path ? this.findByFocusPath(state.path, doc) : undefined;
+      if(target?.tagName !== state.tagName) {
+        target = doc.getElementsByTagName(state.element.localName)[state.tagIndex];
+      }
+      if(target?.tagName !== state.tagName) {
+        return;
+      }
+    }
+
+    let focusTarget = target === state.element && state.shadowElement?.isConnected ? state.shadowElement : target;
+    this.focusElement(focusTarget);
+
+    // A replaced custom element may need to render before it can take focus.
+    let registry = (doc.defaultView || globalThis).customElements;
+    if(this.isFocusLost(doc) && registry?.get(target.localName)) {
+      await (target.updateComplete || new Promise(resolve => setTimeout(resolve)));
+      if(!this.isFocusLost(doc) || !target.isConnected) {
+        return;
+      }
+      this.focusElement(focusTarget);
+    }
+
+    if(state.selection && this.isTextControl(target)) {
+      let { selectionStart, selectionEnd, selectionDirection } = state.selection;
+      try {
+        target.setSelectionRange(selectionStart, selectionEnd, selectionDirection);
+      } catch(e) {
+        // Some input types don’t support selection
+      }
+    }
+  }
+
   static reloadTypes = {
     css: (files, build = {}) => {
       // Initiate a full page refresh if a CSS change is made but does match any stylesheet url
@@ -291,6 +401,8 @@ export class ReloadClient {
         for (let {url, inputPath, content} of domdiffTemplates) {
           // Notable limitation: this won’t re-run script elements or JavaScript page lifecycle events (load/DOMContentLoaded)
           morphed = true;
+
+          let focusState = ReloadClient.captureFocus();
 
           morphdom(document.documentElement, content, {
             childrenOnly: false,
@@ -354,6 +466,7 @@ export class ReloadClient {
           });
 
           Util.matchRootAttributes(content);
+          await ReloadClient.restoreFocus(focusState);
           Util.log(`HTML delta applied without page reload.`);
         }
       } catch(e) {

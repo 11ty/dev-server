@@ -161,3 +161,191 @@ test("Client: getSocketUrl keeps pathPrefix from the script URL", (t) => {
 test("Client: getSocketUrl uses reloadPort", (t) => {
   t.is(ReloadClient.getSocketUrl("http://localhost:8080/prefix/", "http://localhost:8080/prefix/.11ty/reload-client.js?reloadPort=8081"), "ws://localhost:8081/prefix/?page=%2Fprefix%2F");
 });
+
+// A minimal DOM, just enough for the focus helpers.
+class FakeElement {
+  constructor(doc, tagName, { id = "", children = [] } = {}) {
+    this.doc = doc;
+    this.tagName = tagName.toUpperCase();
+    this.localName = tagName;
+    this.id = id;
+    this.parentElement = null;
+    this.children = [];
+    for(let child of children) {
+      this.append(child);
+    }
+  }
+  append(child) {
+    child.parentElement = this;
+    this.children.push(child);
+  }
+  replaceWith(other) {
+    let siblings = this.parentElement.children;
+    siblings[siblings.indexOf(this)] = other;
+    other.parentElement = this.parentElement;
+    this.parentElement = null;
+  }
+  get isConnected() {
+    let node = this;
+    while(node.parentElement) {
+      node = node.parentElement;
+    }
+    return node === this.doc.documentElement;
+  }
+  focus(options) {
+    this.doc.activeElement = this;
+    this.focusOptions = options;
+  }
+  setSelectionRange(start, end, direction) {
+    Object.assign(this, { selectionStart: start, selectionEnd: end, selectionDirection: direction });
+  }
+  querySelector(selector) {
+    let node = this;
+    for(let step of selector.replace(/^:scope > /, "").split(" > ")) {
+      let [, tag, index] = step.match(/^([\w-]+):nth-of-type\((\d+)\)$/);
+      node = node?.children.filter(child => child.tagName === tag.toUpperCase())[index - 1];
+    }
+    return node;
+  }
+  *walk() {
+    yield this;
+    for(let child of this.children) {
+      yield* child.walk();
+    }
+  }
+}
+
+function getDocument() {
+  let doc = {};
+  let el = (tag, options) => new FakeElement(doc, tag, options);
+  let link = el("a");
+  let nav = el("nav", { id: "site-nav", children: [el("a"), link] });
+  let button = el("button");
+  let body = el("body", { children: [nav, el("div"), el("div", { children: [button] })] });
+  Object.assign(doc, {
+    el,
+    link,
+    button,
+    body,
+    documentElement: el("html", { children: [el("head"), body] }),
+    getElementsByTagName(name) {
+      return [...this.documentElement.walk()].filter(node => node.localName === name);
+    },
+    getElementById(id) {
+      return [...this.documentElement.walk()].find(node => node.id === id) || null;
+    },
+  });
+  return doc;
+}
+
+test("Client: getFocusPath uses the nearest id, then `<html>`", (t) => {
+  let doc = getDocument();
+  t.deepEqual(ReloadClient.getFocusPath(doc.link, doc), { id: "site-nav", selector: "a:nth-of-type(2)" });
+  t.deepEqual(ReloadClient.getFocusPath(doc.button, doc), { id: undefined, selector: "body:nth-of-type(1) > div:nth-of-type(2) > button:nth-of-type(1)" });
+});
+
+test("Client: captureFocus ignores body", (t) => {
+  let doc = getDocument();
+  doc.activeElement = doc.body;
+  t.is(ReloadClient.captureFocus(doc), undefined);
+});
+
+test("Client: restoreFocus refocuses a kept element", async (t) => {
+  let doc = getDocument();
+  doc.link.focus();
+  let state = ReloadClient.captureFocus(doc);
+  doc.activeElement = doc.body;
+
+  await ReloadClient.restoreFocus(state, doc);
+  t.is(doc.activeElement, doc.link);
+  t.deepEqual(doc.link.focusOptions, { preventScroll: true });
+});
+
+test("Client: restoreFocus refocuses a replacement with the same tag", async (t) => {
+  let doc = getDocument();
+  doc.button.focus();
+  let state = ReloadClient.captureFocus(doc);
+  let replacement = doc.el("button");
+  doc.button.replaceWith(replacement);
+  doc.activeElement = doc.body;
+
+  await ReloadClient.restoreFocus(state, doc);
+  t.is(doc.activeElement, replacement);
+});
+
+test("Client: restoreFocus skips a replacement with a different tag", async (t) => {
+  let doc = getDocument();
+  doc.link.focus();
+  let state = ReloadClient.captureFocus(doc);
+  doc.link.replaceWith(doc.el("span"));
+  doc.activeElement = doc.body;
+
+  await ReloadClient.restoreFocus(state, doc);
+  t.is(doc.activeElement, doc.body);
+});
+
+test("Client: restoreFocus leaves focus a page script moved", async (t) => {
+  let doc = getDocument();
+  doc.link.focus();
+  let state = ReloadClient.captureFocus(doc);
+  doc.button.focus();
+
+  await ReloadClient.restoreFocus(state, doc);
+  t.is(doc.activeElement, doc.button);
+});
+
+test("Client: restoreFocus restores text selection", async (t) => {
+  let doc = getDocument();
+  let input = doc.el("input");
+  doc.body.append(input);
+  input.setSelectionRange(2, 5, "backward");
+  input.focus();
+  let state = ReloadClient.captureFocus(doc);
+  let replacement = doc.el("input");
+  input.replaceWith(replacement);
+  doc.activeElement = null;
+
+  await ReloadClient.restoreFocus(state, doc);
+  t.is(doc.activeElement, replacement);
+  t.deepEqual([replacement.selectionStart, replacement.selectionEnd, replacement.selectionDirection], [2, 5, "backward"]);
+});
+
+test("Client: restoreFocus waits for a replaced custom element to render", async (t) => {
+  let doc = getDocument();
+  doc.defaultView = { customElements: { get: (name) => name === "wa-switch" ? class {} : undefined } };
+  let host = doc.el("wa-switch");
+  doc.body.append(host);
+  host.focus();
+  let state = ReloadClient.captureFocus(doc);
+
+  // Like Web Awesome, `focus()` throws until the first render.
+  let replacement = doc.el("wa-switch");
+  let rendered = false;
+  let focus = replacement.focus;
+  replacement.focus = function(options) {
+    if(!rendered) {
+      throw new TypeError("Cannot read properties of null (reading 'focus')");
+    }
+    focus.call(this, options);
+  };
+  replacement.updateComplete = Promise.resolve().then(() => { rendered = true; });
+  host.replaceWith(replacement);
+  doc.activeElement = doc.body;
+
+  await ReloadClient.restoreFocus(state, doc);
+  t.is(doc.activeElement, replacement);
+});
+
+test("Client: restoreFocus finds a replacement whose parent changed by its order among same-tag elements", async (t) => {
+  let doc = getDocument();
+  doc.button.focus();
+  let state = ReloadClient.captureFocus(doc);
+
+  // The parent `div` became a `section`, so the positional path no longer leads to a `button`.
+  let replacement = doc.el("button");
+  doc.button.parentElement.replaceWith(doc.el("section", { children: [replacement] }));
+  doc.activeElement = doc.body;
+
+  await ReloadClient.restoreFocus(state, doc);
+  t.is(doc.activeElement, replacement);
+});
