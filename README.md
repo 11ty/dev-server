@@ -154,6 +154,6 @@ npm run test
   - Adds TypeScript types
   - _Breaking:_ Drops support for CLI `--domdiff=false`: use `--no-domdiff` instead.
   - _Breaking:_ Bumps Node.js minimum to 22.15
-  - _Breaking:_ [`chokidar@4` drops support for globs in `watch` option](https://github.com/paulmillr/chokidar#upgrading)
+  - Uses `chokidar@5` via [`@11ty/chokidar-with-glob-support`](https://www.npmjs.com/package/@11ty/chokidar-with-glob-support) (globs in `watch` are still supported)
 - `v2.0.0`
   - Bumps Node.js minimum to 18

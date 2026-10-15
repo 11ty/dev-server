@@ -10,7 +10,7 @@ import { Worker } from "node:worker_threads";
 
 import WebSocket, { WebSocketServer } from "ws";
 import mime from "mime";
-import chokidar from "chokidar";
+import chokidar from "@11ty/chokidar-with-glob-support";
 import { isPlainObject } from "@11ty/eleventy-utils";
 import { createDebug } from "obug";
 
@@ -81,7 +81,7 @@ const DEFAULT_OPTIONS = {
   encoding: /** @type {BufferEncoding} */ ("utf-8"),
   /** Virtual base directory for the served files (may be set by Eleventy). */
   pathPrefix: "/",
-  /** Files or directories to watch with the dev server’s own watcher (no globs). */
+  /** Files or directories to watch with the dev server’s own watcher (globs supported). */
   watch: /** @type {string[]} */ ([]),
   /** Options for the dev server’s own watcher. */
   chokidarOptions: /** @type {ChokidarOptions} */ ({}),
@@ -295,22 +295,6 @@ export default class DevServer {
     this.#staticFiles?.setOptions(this.options);
   }
 
-  /** @param {string[]} targets */
-  #assertNoGlobs(targets) {
-    for(let target of targets) {
-      if(typeof target === "string" && /[*?[\]{}!]/.test(target)) {
-        throw new Error(`Glob patterns are not supported in the Dev Server \`watch\` option (received "${target}"). Pass file or directory paths instead, e.g. use Node’s built-in globbing (Node 22.17+ stable):
-
-  import { globSync } from "node:fs";
-  eleventyConfig.setServerOptions({
-    watch: globSync("${target}"),
-  });
-
-Note: globs resolved this way are evaluated once at startup; watch a directory (e.g. "_site/styles/") to pick up newly added files.`);
-      }
-    }
-  }
-
   /** @param {FSWatcher} watcher */
   #addWatcherListeners(watcher) {
     watcher.on("change", (path) => {
@@ -334,8 +318,6 @@ Note: globs resolved this way are evaluated once at startup; watch a directory (
     if(this.#watcher) {
       return this.#watcher;
     }
-
-    this.#assertNoGlobs(this.options.watch);
 
     debug("Watching files: %O", this.options.watch);
     this.#watcher = chokidar.watch(this.options.watch, Object.assign({
@@ -374,7 +356,6 @@ Note: globs resolved this way are evaluated once at startup; watch a directory (
   /** @param {string[]} targets */
   watchFiles(targets) {
     if(Array.isArray(targets) && targets.length > 0) {
-      this.#assertNoGlobs(targets);
       debug("Also watching: %O", targets);
       this.watcher.add(targets);
     }

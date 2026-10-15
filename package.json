@@ -61,6 +61,7 @@
   "bugs": "https://github.com/11ty/dev-server/issues",
   "homepage": "https://github.com/11ty/dev-server/",
   "dependencies": {
+    "@11ty/chokidar-with-glob-support": "^2.0.0",
     "@11ty/eleventy-utils": "^3.0.1",
     "@11ty/node-version-check": "^1.0.1",
     "chokidar": "^5.0.0",

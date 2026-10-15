@@ -116,25 +116,24 @@ test("`watchFiles` creates the server-owned watcher alongside `chokidar`", async
   await server.close();
 });
 
-test("Glob targets in `watch` throw", (t) => {
-  let error = t.throws(() => {
-    new DevServer("test-server", "./test/stubs/", getOptions({
-      watch: ["_site/**/*.css"],
-    }));
-  });
+test("Glob targets in `watch` reload", async (t) => {
+  let dir = getTempDir();
+  let file = path.join(dir, "style.css");
+  fs.writeFileSync(file, "a {}");
+  fs.writeFileSync(path.join(dir, "ignored.txt"), "a");
 
-  t.true(error.message.startsWith(`Glob patterns are not supported in the Dev Server \`watch\` option (received "_site/**/*.css").`));
-  t.true(error.message.includes(`watch: globSync("_site/**/*.css"),`));
-});
+  let server = new DevServer("test-server", "./test/stubs/", getOptions({
+    watch: [path.join(dir, "**/*.css")],
+    chokidarOptions: { awaitWriteFinish: false, usePolling: true, interval: 50 },
+  }));
 
-test("Glob targets in `watchFiles` throw", async (t) => {
-  let server = new DevServer("test-server", "./test/stubs/", getOptions());
+  await waitForReady(server.watcher);
+  let reloaded = waitForReload(server);
+  fs.writeFileSync(path.join(dir, "ignored.txt"), "b");
+  fs.writeFileSync(file, "b {}");
 
-  let error = t.throws(() => {
-    server.watchFiles(["_site/{a,b}.css"]);
-  });
-
-  t.true(error.message.includes(`(received "_site/{a,b}.css")`));
+  t.deepEqual(await reloaded, [file]);
 
   await server.close();
+  fs.rmSync(dir, { recursive: true, force: true });
 });
