@@ -7,7 +7,7 @@ const { WebSocketServer } = WebSocket;
 const mime = require("mime");
 const ssri = require("ssri");
 const send = require("send");
-const chokidar = require("chokidar");
+const chokidar = require("@11ty/chokidar-with-glob-support");
 const { TemplatePath, isPlainObject } = require("@11ty/eleventy-utils");
 
 const debug = require("debug")("Eleventy:DevServer");
@@ -15,7 +15,6 @@ const debug = require("debug")("Eleventy:DevServer");
 const pkg = require("./package.json");
 const wrapResponse = require("./server/wrapResponse.js");
 const ipAddress = require("./server/ipAddress.js");
-const WatchTargets = require("./server/watchTargets.js");
 
 if (!globalThis.URLPattern) {
   require("urlpattern-polyfill");
@@ -70,7 +69,6 @@ const DEFAULT_OPTIONS = {
 
 class EleventyDevServer {
   #watcher;
-  #watchTargets = new WatchTargets();
   #serverClosing;
   #serverState;
   #readyPromise;
@@ -126,10 +124,10 @@ class EleventyDevServer {
 
     debug("Watching %O", this.options.watch);
     // TODO if using Eleventy and `watch` option includes output folder (_site) this will trigger two update events!
-    this.#watcher = chokidar.watch(this.#watchTargets.add(this.options.watch), {
+    this.#watcher = chokidar.watch(this.options.watch, {
       // TODO allow chokidar configuration extensions (or re-use the ones in Eleventy)
 
-      ignored: (filePath, stats) => this.#watchTargets.isIgnored(filePath, stats),
+      ignored: ["**/node_modules/**", ".git"],
       ignoreInitial: true,
 
       // same values as Eleventy
@@ -165,7 +163,7 @@ class EleventyDevServer {
       files = files.map(entry => TemplatePath.stripLeadingDotSlash(entry));
 
       debug("Also watching %O", files);
-      this.watcher.add(this.#watchTargets.add(files));
+      this.watcher.add(files);
     }
   }
 
@@ -907,7 +905,6 @@ class EleventyDevServer {
     if(this.#watcher) {
       promises.push(this.#watcher.close());
       this.#watcher = undefined;
-      this.#watchTargets = new WatchTargets();
     }
 
     this.#serverClosing = Promise.all(promises).then(() => {
