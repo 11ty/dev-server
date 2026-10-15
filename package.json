@@ -16,7 +16,7 @@
     "url": "https://opencollective.com/11ty"
   },
   "bin": {
-    "eleventy-dev-server": "./cmd.js"
+    "eleventy-dev-server": "cmd.js"
   },
   "keywords": [
     "eleventy",
