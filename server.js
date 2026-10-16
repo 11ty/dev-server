@@ -31,7 +31,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const debug = createDebug("Eleventy:DevServer");
 
 /** @import { IncomingMessage, ServerResponse } from "node:http" */
-/** @import { ChokidarOptions, FSWatcher } from "chokidar" */
+/** @import { WatchOptions, Watcher } from "@11ty/chokidar-with-glob-support" */
 
 /**
  * @typedef {(req: IncomingMessage, res: ServerResponse, next: () => unknown) => unknown} Middleware
@@ -84,9 +84,9 @@ const DEFAULT_OPTIONS = {
   /** Files or directories to watch with the dev server’s own watcher (globs supported). */
   watch: /** @type {string[]} */ ([]),
   /** Options for the dev server’s own watcher. */
-  chokidarOptions: /** @type {ChokidarOptions} */ ({}),
+  chokidarOptions: /** @type {WatchOptions} */ ({}),
   /** Additional watcher instance whose events also trigger reloads. */
-  chokidar: /** @type {FSWatcher | undefined} */ (undefined),
+  chokidar: /** @type {Watcher | undefined} */ (undefined),
   /** Maps URLs to files outside the served directory. */
   aliases: /** @type {Record<string, string>} */ ({}),
   /** Index file for directory URLs. */
@@ -95,6 +95,8 @@ const DEFAULT_OPTIONS = {
   useCache: false,
   /** Match URLs to files by exact case, like most production servers (matters on macOS and Windows). */
   caseSensitive: true,
+  /** Serve dotfiles (e.g. `.htaccess`), which most production servers don’t. `/.well-known/` is always served. */
+  dotfiles: false,
   /** Headers added to every static file response. */
   headers: /** @type {Record<string, string>} */ ({}),
   /** Extra hostnames allowed to connect to live reload (localhost and IP addresses always are), or `true` for any. */
@@ -166,6 +168,7 @@ const THREAD_TRANSFERABLE_OPTIONS = [
   "headers",
   "allowedHosts",
   "caseSensitive",
+  "dotfiles",
 ];
 
 const POLITE_WEBSOCKET_CLOSE_TIMEOUT = 50; // in ms
@@ -295,7 +298,7 @@ export default class DevServer {
     this.#staticFiles?.setOptions(this.options);
   }
 
-  /** @param {FSWatcher} watcher */
+  /** @param {Watcher} watcher */
   #addWatcherListeners(watcher) {
     watcher.on("change", (path) => {
       this.logger.log( `File changed: ${path} (skips build)` );
@@ -313,7 +316,7 @@ export default class DevServer {
     });
   }
 
-  /** @returns {FSWatcher} */
+  /** @returns {Watcher} */
   get watcher() {
     if(this.#watcher) {
       return this.#watcher;
@@ -380,11 +383,22 @@ export default class DevServer {
 
   /**
    * Maps URLs to files outside the served directory (emulated passthrough copy).
+   * `dot` and `junk` are `@11ty/recursive-copy` options (default `true` and `false`).
+   * @param {Array<{ url: string, inputPath: string, dot?: boolean, junk?: boolean }>} entries
+   */
+  setPassthroughCopies(entries) {
+    this.#staticFiles.setPassthroughCopies(entries);
+    this.#worker?.postMessage({ type: "passthroughCopies", entries: this.#staticFiles.passthroughCopies });
+  }
+
+  /**
+   * @deprecated Use `setPassthroughCopies()`
    * @param {Record<string, string>} aliases
    */
   setAliases(aliases) {
-    this.#staticFiles.setAliases(aliases);
-    this.#worker?.postMessage({ type: "aliases", aliases });
+    if(aliases) {
+      this.setPassthroughCopies(Object.entries(aliases).map(([url, inputPath]) => ({ url, inputPath })));
+    }
   }
 
   /** @internal */
@@ -611,8 +625,8 @@ export default class DevServer {
         options,
         onRequestPatterns: Object.keys(this.options.onRequest || {}),
         hasMiddleware: this.#hasUserRequestHandlers(),
-        // Eleventy may call setAliases() before serve()
-        passthroughAliases: this.#staticFiles.passthroughAliases,
+        // Eleventy may call setPassthroughCopies() before serve()
+        passthroughCopies: this.#staticFiles.passthroughCopies,
         port,
         host: this.listenHost,
         buildId: this.buildId,

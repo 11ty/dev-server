@@ -42,7 +42,7 @@ class ServerThread {
   #closing = false;
   #buildId;
 
-  constructor({ dir, options, onRequestPatterns, hasMiddleware, passthroughAliases, port, host, buildId }) {
+  constructor({ dir, options, onRequestPatterns, hasMiddleware, passthroughCopies, port, host, buildId }) {
     this.#options = options;
     this.#buildId = buildId;
     this.hasMiddleware = hasMiddleware;
@@ -57,7 +57,7 @@ class ServerThread {
       },
     }));
 
-    this.#staticFiles.setAliases(passthroughAliases);
+    this.#staticFiles.setPassthroughCopies(passthroughCopies);
 
     for(let pattern of onRequestPatterns) {
       this.#onRequestPatterns.push({
@@ -448,8 +448,8 @@ class ServerThread {
       } else {
         this.#broadcastJson(msg.json, undefined, msg.clientId);
       }
-    } else if(msg.type === "aliases") {
-      this.#staticFiles.setAliases(msg.aliases);
+    } else if(msg.type === "passthroughCopies") {
+      this.#staticFiles.setPassthroughCopies(msg.entries);
     } else if(msg.type === "close") {
       this.close();
     }

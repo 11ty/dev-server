@@ -159,6 +159,17 @@ test("Middleware headers survive fallthrough to the server thread", async (t) =>
   t.is(threaded.body, single.body);
 });
 
+test("`dotfiles` option reaches the server thread", async (t) => {
+  let aliases = { "/junk/": "./test/stubs-passthrough-junk/" };
+  let hidden = await inBothModes({ aliases }, (server) => request(server, "/junk/.htaccess"));
+  let shown = await inBothModes({ aliases, dotfiles: true }, (server) => request(server, "/junk/.htaccess"));
+
+  t.is(hidden.threaded.statusCode, 404);
+  t.is(hidden.single.statusCode, 404);
+  t.is(shown.threaded.statusCode, 200);
+  t.is(shown.single.statusCode, 200);
+});
+
 test("Aliases set before serve() reach the server thread", async (t) => {
   let results = {};
   for(let serverThread of [true, false]) {
@@ -171,6 +182,30 @@ test("Aliases set before serve() reach the server thread", async (t) => {
 
   t.true(results.threaded.body.startsWith("SAMPLE"));
   t.is(results.threaded.body, results.single.body);
+});
+
+test("Passthrough copies reach the server thread", async (t) => {
+  let results = {};
+  for(let serverThread of [true, false]) {
+    let server = new DevServer("test-server", "./test/stubs/", getOptions({ serverThread }));
+    server.setPassthroughCopies([{ url: "/no-junk/", inputPath: "./test/stubs-passthrough-junk/" }]);
+    server.serve(0);
+    // after serve(): sent to a running server thread
+    server.setPassthroughCopies([
+      { url: "/junk/", inputPath: "./test/stubs-passthrough-junk/", junk: true },
+      { url: "/no-junk/", inputPath: "./test/stubs-passthrough-junk/" },
+    ]);
+    results[serverThread ? "threaded" : "single"] = {
+      junk: await request(server, "/junk/Thumbs.db"),
+      noJunk: await request(server, "/no-junk/Thumbs.db"),
+    };
+    await server.close();
+  }
+
+  t.is(results.threaded.junk.statusCode, 200);
+  t.is(results.threaded.noJunk.statusCode, 404);
+  t.is(results.threaded.junk.statusCode, results.single.junk.statusCode);
+  t.is(results.threaded.noJunk.statusCode, results.single.noJunk.statusCode);
 });
 
 test("Injected scripts are served off the main thread", async (t) => {

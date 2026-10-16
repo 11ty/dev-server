@@ -61,10 +61,10 @@
   "bugs": "https://github.com/11ty/dev-server/issues",
   "homepage": "https://github.com/11ty/dev-server/",
   "dependencies": {
-    "@11ty/chokidar-with-glob-support": "^2.0.0",
+    "@11ty/chokidar-with-glob-support": "^2.1.0",
     "@11ty/eleventy-utils": "^3.0.1",
     "@11ty/node-version-check": "^1.0.1",
-    "chokidar": "^5.0.0",
+    "@11ty/recursive-copy": "^5.1.0",
     "entities": "^8.1.0",
     "mime": "^4.1.1",
     "morphdom": "^2.7.8",

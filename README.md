@@ -90,6 +90,16 @@ URLs must match the case of files on disk, like most production servers, so `/Ab
 }
 ```
 
+## Dotfiles
+
+Dotfiles like `.htaccess` are not served, like most production servers, except under `/.well-known/`. Opt out with:
+
+```js
+{
+  dotfiles: true
+}
+```
+
 ## Reverse proxies
 
 Behind a reverse proxy that serves the site under a path, set `pathPrefix` to that path: the injected scripts and the live reload connection use it too. The proxy needs to forward WebSocket upgrades, and either keep the `Host` header or have its hostname in `allowedHosts`.
@@ -148,6 +158,8 @@ npm run test
   - _Breaking:_ Dev server now only listens on `127.0.0.1` by default (set `host: "0.0.0.0"` for broader network access)
     - _Breaking:_ Live reload only accepts connections from pages on `localhost`, IP addresses, or hostnames in `allowedHosts`
   - _Breaking:_ URLs must match the case of files on disk to match strictest case-sensitive servers (opt out with `caseSensitive: false`)
+  - _Breaking:_ Dotfiles (e.g. `.htaccess`) are no longer served, except under `/.well-known/` (opt out with `dotfiles: true`)
+  - Emulated passthrough copy skips files that passthrough copy wouldn’t copy (OS junk files like `.DS_Store`, and `dot`/`junk` copy options), via `setPassthroughCopies()` (`setAliases()` is deprecated)
   - Similar to `404.html`, adds support for `500.html` in the output folder (used for server errors)
   - `pathPrefix` now applies to injected client path and live reload connection
   - Adds `data-buildawesome-preserve` attribute to opt out of `domDiff` for specific DOM nodes

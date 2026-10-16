@@ -379,6 +379,83 @@ test("Passthrough aliases must match the case of files on disk", async (t) => {
   await server.close();
 });
 
+test("Passthrough aliases skip OS junk files but not other dotfiles", async (t) => {
+  let server = new DevServer("test-server", "./test/stubs/", getOptions());
+  server.setAliases({ "/junk/": "./test/stubs-passthrough-junk/" });
+
+  t.is(server.matchPassthroughAlias("/junk/Thumbs.db"), false);
+  t.deepEqual(server.mapUrlToFilePath("/junk/Thumbs.db"), { statusCode: 404 });
+
+  // copied, but not served
+  t.is(server.matchPassthroughAlias("/junk/.htaccess"), "./test/stubs-passthrough-junk/.htaccess");
+  t.deepEqual(server.mapUrlToFilePath("/junk/.htaccess"), { statusCode: 404 });
+
+  t.is(server.matchPassthroughAlias("/junk/file.txt"), "./test/stubs-passthrough-junk/file.txt");
+  t.is(server.mapUrlToFilePath("/junk/file.txt").statusCode, 200);
+
+  await server.close();
+});
+
+test("Dotfiles are not served, except `/.well-known/`", async (t) => {
+  let server = new DevServer("test-server", "./test/stubs-passthrough-junk/", getOptions());
+
+  t.deepEqual(server.mapUrlToFilePath("/.htaccess"), { statusCode: 404 });
+  t.deepEqual(server.mapUrlToFilePath("/%2Ehtaccess"), { statusCode: 404 });
+  t.deepEqual(server.mapUrlToFilePath("/.well-known/.hidden"), { statusCode: 404 });
+  t.deepEqual(server.mapUrlToFilePath("/sub/.well-known/security.txt"), { statusCode: 404 });
+  t.is(server.mapUrlToFilePath("/.well-known/security.txt").statusCode, 200);
+  t.is(server.mapUrlToFilePath("/file.txt").statusCode, 200);
+
+  await server.close();
+});
+
+test("Dotfiles are served with `dotfiles: true`", async (t) => {
+  let server = new DevServer("test-server", "./test/stubs-passthrough-junk/", getOptions({ dotfiles: true }));
+  server.setAliases({ "/junk/": "./test/stubs-passthrough-junk/" });
+
+  t.is(server.mapUrlToFilePath("/.htaccess").statusCode, 200);
+  t.is(server.mapUrlToFilePath("/.well-known/.hidden").statusCode, 200);
+  t.is(server.mapUrlToFilePath("/junk/.htaccess").statusCode, 200);
+
+  await server.close();
+});
+
+test("Passthrough aliases serve `/.well-known/`", async (t) => {
+  let server = new DevServer("test-server", "./test/stubs/", getOptions());
+  server.setPassthroughCopies([{ url: "/.well-known/", inputPath: "./test/stubs-passthrough-junk/.well-known/" }]);
+
+  t.is(server.mapUrlToFilePath("/.well-known/security.txt").statusCode, 200);
+
+  await server.close();
+});
+
+test("Passthrough copies apply `dot` and `junk` like passthrough copy", async (t) => {
+  let server = new DevServer("test-server", "./test/stubs/", getOptions());
+  server.setPassthroughCopies([
+    { url: "/junk/", inputPath: "./test/stubs-passthrough-junk/", dot: true, junk: true },
+    { url: "/no-dot/", inputPath: "./test/stubs-passthrough-junk/", dot: false, junk: false },
+    { url: "/thumbs.db", inputPath: "./test/stubs-passthrough-junk/Thumbs.db" },
+  ]);
+
+  t.is(server.matchPassthroughAlias("/junk/Thumbs.db"), "./test/stubs-passthrough-junk/Thumbs.db");
+  t.is(server.matchPassthroughAlias("/no-dot/.htaccess"), false);
+  t.is(server.matchPassthroughAlias("/no-dot/file.txt"), "./test/stubs-passthrough-junk/file.txt");
+  // Passthrough copy skips a junk file copied directly, too
+  t.is(server.matchPassthroughAlias("/thumbs.db"), false);
+
+  await server.close();
+});
+
+test("`aliases` option entries serve OS junk files", async (t) => {
+  let server = new DevServer("test-server", "./test/stubs/", getOptions({
+    aliases: { "/junk/": "./test/stubs-passthrough-junk/" },
+  }));
+
+  t.is(server.matchPassthroughAlias("/junk/Thumbs.db"), "./test/stubs-passthrough-junk/Thumbs.db");
+
+  await server.close();
+});
+
 test("caseSensitive: false serves any case on case-insensitive file systems", async (t) => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions({ caseSensitive: false }));
 
