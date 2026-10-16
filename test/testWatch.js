@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { EventEmitter } from "node:events";
 import test from "ava";
-import chokidar from "chokidar";
+import chokidar from "@11ty/chokidar-with-glob-support";
 import DevServer from "../server.js";
 
 function getOptions(options = {}) {
@@ -23,6 +23,20 @@ function waitForReload(server) {
   return new Promise(resolve => {
     server.reloadFiles = (files) => resolve(files);
   });
+}
+
+// A single write right after `ready` can be missed under load (polling never reports it), so keep writing until it reloads
+async function writeUntilReloaded(server, file) {
+  let reloaded = waitForReload(server);
+  let count = 0;
+  let write = () => fs.writeFileSync(file, `b${count++} {}`);
+  write();
+  let timer = setInterval(write, 250);
+  try {
+    return await reloaded;
+  } finally {
+    clearInterval(timer);
+  }
 }
 
 function waitForReady(watcher) {
@@ -56,10 +70,8 @@ test("`watch` targets reload when `chokidar` is also passed", async (t) => {
   t.deepEqual(external.added, []);
 
   await waitForReady(server.watcher);
-  let reloaded = waitForReload(server);
-  fs.writeFileSync(file, "b {}");
 
-  t.deepEqual(await reloaded, [file]);
+  t.deepEqual(await writeUntilReloaded(server, file), [file]);
 
   await server.close();
   fs.rmSync(dir, { recursive: true, force: true });
@@ -128,11 +140,9 @@ test("Glob targets in `watch` reload", async (t) => {
   }));
 
   await waitForReady(server.watcher);
-  let reloaded = waitForReload(server);
   fs.writeFileSync(path.join(dir, "ignored.txt"), "b");
-  fs.writeFileSync(file, "b {}");
 
-  t.deepEqual(await reloaded, [file]);
+  t.deepEqual(await writeUntilReloaded(server, file), [file]);
 
   await server.close();
   fs.rmSync(dir, { recursive: true, force: true });
