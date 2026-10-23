@@ -8,7 +8,6 @@ import { createSecureServer } from "node:http2";
 import { createServer } from "node:http";
 import { Worker } from "node:worker_threads";
 
-import WebSocket, { WebSocketServer } from "ws";
 import mime from "mime";
 import chokidar from "@11ty/chokidar-with-glob-support";
 import { isPlainObject } from "@11ty/eleventy-utils";
@@ -18,7 +17,7 @@ import wrapResponse from "./server/wrapResponse.js";
 import ipAddress from "./server/ipAddress.js";
 import StaticFiles from "./server/staticFiles.js";
 import { isPortInUse, portInUseError } from "./server/portCheck.js";
-import { parseClientMessage, isConnectionAllowed, registerConnection, getConnection, sendReloadByPage } from "./server/clientConnection.js";
+import { ReloadChannel } from "./server/clientConnection.js";
 
 const require = createRequire(import.meta.url);
 
@@ -59,8 +58,6 @@ const debug = createDebug("Eleventy:DevServer");
 const DEFAULT_OPTIONS = {
   /** Port to listen on, incremented if in use. */
   port: /** @type {number | string} */ (8080),
-  /** Separate port for live reload, falsy uses `port`. */
-  reloadPort: /** @type {number | false} */ (false),
   /** Enable live reload. */
   liveReload: true,
   /** Address to listen on, e.g. `0.0.0.0` for network access. */
@@ -68,7 +65,7 @@ const DEFAULT_OPTIONS = {
   /** List network addresses (other than localhost), defaults to on when `host` allows network access. */
   showAllHosts: /** @type {boolean | undefined} */ (undefined),
   /** Folder name for injected scripts. */
-  injectedScriptsFolder: ".11ty",
+  injectedScriptsFolder: ".ba",
   /** Number of times to try the next port if in use. */
   portReassignmentRetryCount: 10,
   /** Paths to a key and certificate, required for HTTPS and HTTP/2. */
@@ -154,7 +151,6 @@ const DEFAULT_OPTIONS = {
 
 // Option keys that are safe to structured-clone across to the server thread.
 const THREAD_TRANSFERABLE_OPTIONS = [
-  "reloadPort",
   "liveReload",
   "injectedScriptsFolder",
   "portReassignmentRetryCount",
@@ -171,7 +167,6 @@ const THREAD_TRANSFERABLE_OPTIONS = [
   "dotfiles",
 ];
 
-const POLITE_WEBSOCKET_CLOSE_TIMEOUT = 50; // in ms
 const MAX_WORKER_RESTARTS = 5;
 
 export default class DevServer {
@@ -190,7 +185,7 @@ export default class DevServer {
   #worker;
   #workerClosed;
   #port;
-  #updateServer;
+  #reloadChannel;
   #threadClientCount = 0;
   #workerListening = false;
   #workerRestarts = 0;
@@ -604,6 +599,10 @@ export default class DevServer {
 
   /** @internal */
   async onRequestHandler (req, res) {
+    if(this.#reloadChannel && this.#staticFiles.matchInjectedScript(req.url) === "events") {
+      return this.#reloadChannel.handle(req, res);
+    }
+
     res = wrapResponse(res, this.#transformHtml(req, res));
 
     await this.#runMiddlewareChain(req, res, this.projectStaticMiddleware);
@@ -1039,110 +1038,57 @@ export default class DevServer {
     }
   }
 
-  // Websocket Notifications
+  // Live reload notifications
   /** @internal */
   setupReloadNotifier() {
-    let options = {};
-    if(this.options.reloadPort) {
-      options.port = this.options.reloadPort;
-      options.host = this.listenHost;
-    } else {
-      // includes the port
-      options.server = this.server;
-    }
-
-    let blocked = new Set();
-    options.verifyClient = ({ origin, req }) => {
-      let host = req.headers.host;
-      if(isConnectionAllowed({ origin, host }, this.options.allowedHosts)) {
-        return true;
-      }
-      let key = `${origin} ${host}`;
-      if(!blocked.has(key)) {
-        blocked.add(key);
-        this.logger.error(`Blocked a live reload connection from origin ${origin} to host ${host}. Add the hostname to the \`allowedHosts\` server option if this was you.`);
-      }
-      return false;
-    };
-
-    let updateServer = new WebSocketServer(options);
-    updateServer.on("connection", (ws, req) => {
-      let { clientId } = registerConnection(ws, req);
-
-      this.sendUpdateNotification({
-        type: "eleventy.status",
-        status: "connected",
-        buildId: this.buildId,
-      }, { include: ws });
-
-      ws.on("message", (data) => {
-        let parsed = parseClientMessage(data);
-        if(!parsed) {
-          return;
-        }
-        if(parsed.id) {
-          // send acknowledgement
-          this.sendUpdateNotification({
-            type: "eleventy.ack",
-            id: parsed.id,
-          }, { include: ws });
-        }
-
+    this.#reloadChannel = new ReloadChannel({
+      allowedHosts: this.options.allowedHosts,
+      getBuildId: () => this.buildId,
+      logError: (message) => this.logger.error(message),
+      onClientMessage: (message) => {
         if(typeof this.options.onClientMessage === "function") {
-          this.options.onClientMessage(Object.assign({}, parsed, { clientId }));
+          this.options.onClientMessage(/** @type {ClientMessage} */ (message));
         }
-      });
+      },
     });
-
-    updateServer.on("error", (err) => {
-      this._serverErrorHandler(err);
-    });
-
-    this.#updateServer = updateServer;
   }
 
   /** Live reload connections; in threaded mode, only `clients.size` is available. @returns {{ clients: { size: number } }} */
   get updateServer() {
     if(this.isThreaded) {
-      // The websocket server lives on the server thread; expose the client count only.
+      // The live reload streams live on the server thread; expose the client count only.
       return { clients: { size: this.#threadClientCount } };
     }
-    return this.#updateServer;
+    return this.#reloadChannel;
   }
 
   /**
    * Sends a message to every open page, or only to the one with `clientId` (from `onClientMessage`).
    * @param {Record<string, unknown>} obj
-   * @param {{ clientId?: string, include?: unknown, byPage?: boolean }} [options] `include` and `byPage` are internal.
+   * @param {{ clientId?: string, byPage?: boolean }} [options] `byPage` is internal.
    */
   sendUpdateNotification(obj, options = {}) {
-    let { clientId, include, byPage } = options;
+    let { clientId, byPage } = options;
+    let buildId = typeof obj.buildId === "string" ? obj.buildId : undefined;
     if(this.isThreaded) {
       // Serialized here: structured clone throws on values JSON drops (e.g. functions in template `data`)
-      this.#worker?.postMessage({ type: "broadcast", json: JSON.stringify(obj), buildId: obj.buildId, clientId, byPage });
+      this.#worker?.postMessage({ type: "broadcast", json: JSON.stringify(obj), buildId, clientId, byPage });
       return;
     }
 
-    if(!this.#updateServer?.clients) {
+    if(!this.#reloadChannel) {
       return;
     }
 
     if(byPage) {
-      sendReloadByPage(this.#updateServer.clients, obj, WebSocket.OPEN);
+      this.#reloadChannel.sendByPage(obj);
       return;
     }
 
-    for(let client of this.#updateServer.clients) {
-      if(clientId && getConnection(client)?.clientId !== clientId) {
-        continue;
-      }
-      if ((!include || include === client) && client.readyState === WebSocket.OPEN) {
-        client.send(JSON.stringify(obj));
-      }
-    }
+    this.#reloadChannel.send(JSON.stringify(obj), { clientId, id: buildId });
   }
 
-  // Helper for promisifying close methods with callbacks, like http.Server or ws.WebSocketServer.
+  // Helper for promisifying close methods with callbacks, like http.Server.
   /** @internal */
   async _closeServer(server) {
     return new Promise((resolve, reject) => {
@@ -1153,7 +1099,6 @@ export default class DevServer {
         resolve(undefined);
       });
 
-      // Note: this method won't exist for updateServer
       if("closeAllConnections" in server) {
         // Node 18.2+
         server.closeAllConnections();
@@ -1204,19 +1149,8 @@ export default class DevServer {
       promises.push(this.#closeWorker());
     }
 
-    if(this.#updateServer) {
-      // Close all existing WS connections.
-      this.#updateServer?.clients.forEach(socket => {
-        socket.close();
-
-        if("terminate" in socket) {
-          // More aggressive close, `close()` waits for a response from the client and terminate does not.
-          setTimeout(() => socket.terminate(), POLITE_WEBSOCKET_CLOSE_TIMEOUT);
-        }
-      });
-
-      promises.push(this._closeServer(this.#updateServer));
-    }
+    // Open streams would keep the server from closing
+    this.#reloadChannel?.close();
 
     if(this._server?.listening) {
       promises.push(this._closeServer(this.server));

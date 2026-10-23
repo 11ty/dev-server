@@ -116,13 +116,15 @@ class Util {
 }
 
 export class ReloadClient {
-  #socket;
+  #source;
+  #clientId; // identifies this tab to the server for `sendToServer`
   #ack = [];
   #ready = false; // swap to Promise.withResolvers
   #buildId; // specific to one single core build run
+  #hasConnected = false;
+  #wasDropped = false;
 
   static RELOAD_ENABLED = true;
-  static PORT_PARAM = "reloadPort";
   static CACHE_BUST_PARAM = "_bust";
   static TAG_NAME = "reload-client";
   static RECONNECT_INTERVAL = 2000; // ms
@@ -144,19 +146,10 @@ export class ReloadClient {
     ReloadClient.RELOAD_ENABLED = Boolean(enabled);
   }
 
-  // The page’s host (or `reloadPort`), at the path above this script’s folder so `pathPrefix` is kept, with `?page=` so the server can scope reloads.
-  static getSocketUrl(documentHref, scriptHref) {
-    let scriptUrl = new URL(scriptHref);
-    let url = new URL(new URL("..", scriptUrl).pathname, documentHref);
+  // Next to this script so `pathPrefix` is kept, with `?page=` so the server can scope reloads.
+  static getEventsUrl(documentHref, scriptHref) {
+    let url = new URL("events", scriptHref);
     url.searchParams.set("page", new URL(documentHref).pathname);
-
-    let reloadPort = scriptUrl.searchParams.get(ReloadClient.PORT_PARAM);
-    if(reloadPort) {
-      url.port = reloadPort;
-    }
-
-    // works with http (ws) and https (wss)
-    url.protocol = url.protocol.replace("http", "ws");
     return url.toString();
   }
 
@@ -394,7 +387,7 @@ export class ReloadClient {
       }
 
       try {
-        // Important: using `./` allows the `.11ty` folder name to be changed
+        // Important: using `./` allows the `.ba` folder name to be changed
         // @ts-expect-error Served next to this file at runtime
         const { default: morphdom } = await import(`./morphdom.js`);
 
@@ -483,124 +476,121 @@ export class ReloadClient {
 
   constructor() {
     this.reconnectInterval = ReloadClient.RECONNECT_INTERVAL;
-    this.connectionMessageShown = false;
-    this.reconnectEventCallback = this.reconnect.bind(this);
 
-    // bfcache restores resume with a closed socket: reconnect now, don’t wait on the timer.
+    // Hidden tabs let go of their stream, since HTTP/1.1 browsers allow only 6 connections per host
+    document.addEventListener("visibilitychange", () => {
+      if(document.visibilityState === "visible") {
+        this.connect();
+      } else {
+        this.disconnect();
+      }
+    });
+
+    // bfcache restores resume with a closed stream
     window.addEventListener("pageshow", (event) => {
-      if(event.persisted && this.#socket?.readyState !== WebSocket.OPEN) {
-        this.reconnect(event);
+      if(event.persisted) {
+        this.connect();
       }
     });
   }
 
-  get socket() {
-    if(this.#socket) {
-      return this.#socket;
-    }
-
-    this.#socket = new WebSocket(ReloadClient.getSocketUrl(document.location.href, import.meta.url));
-
-    return this.#socket;
+  init() {
+    this.connect();
   }
 
-  init(options = {}) {
-    if (!("WebSocket" in window)) {
+  connect() {
+    if(!("EventSource" in window) || document.visibilityState === "hidden") {
+      return;
+    }
+    if(this.#source && this.#source.readyState !== EventSource.CLOSED) {
       return;
     }
 
-    this.socket.addEventListener("message", async (event) => {
-      try {
-        let data = JSON.parse(event.data);
-        // Util.log( JSON.stringify(data, null, 2) );
+    clearTimeout(this.reconnectTimer);
 
-        let type = ReloadClient.getEventName(data.type);
+    let source = new EventSource(ReloadClient.getEventsUrl(document.location.href, import.meta.url));
+    this.#source = source;
 
-        if (type === "reload") {
-          await this.onreload(data);
-        } else if (type === "msg") {
-          Util.log(`${data.message}`);
-        } else if (type === "error") {
-          // Log Eleventy build errors
-          // Extra parsing for Node Error objects
-          let e = JSON.parse(data.error);
-          Util.error(`Build error: ${e.message}`, e);
-        } else if (type === "status") {
-          // A reconnect may have missed builds, but usually hasn’t—only reload if the
-          // server moved on. No `buildId` (older server) reloads unconditionally, as before.
-          if (data.status === "connected" && options.mode === "reconnect") {
+    source.addEventListener("message", (event) => this.onmessage(event));
+    source.addEventListener("error", () => {
+      if(this.#source !== source) {
+        return;
+      }
+      if(this.#ready) {
+        Util.log("Reconnecting…");
+      }
+      this.#ready = false;
+      this.#wasDropped = true;
+
+      // The browser retries dropped connections itself, but gives up after a bad response
+      if(source.readyState === EventSource.CLOSED) {
+        this.reconnectTimer = setTimeout(() => {
+          this.reconnectInterval = Math.min(this.reconnectInterval * 2, ReloadClient.MAX_RECONNECT_INTERVAL);
+          this.connect();
+        }, this.reconnectInterval);
+      }
+    });
+  }
+
+  disconnect() {
+    clearTimeout(this.reconnectTimer);
+    this.#source?.close();
+    this.#source = undefined;
+    this.#ready = false;
+  }
+
+  async onmessage(event) {
+    try {
+      let data = JSON.parse(event.data);
+      // Util.log( JSON.stringify(data, null, 2) );
+
+      let type = ReloadClient.getEventName(data.type);
+
+      if (type === "reload") {
+        await this.onreload(data);
+      } else if (type === "msg") {
+        Util.log(`${data.message}`);
+      } else if (type === "error") {
+        // Log Eleventy build errors
+        // Extra parsing for Node Error objects
+        let e = JSON.parse(data.error);
+        Util.error(`Build error: ${e.message}`, e);
+      } else if (type === "status") {
+        if(data.status === "connected") {
+          // A reconnect may have missed builds, but usually hasn’t—only reload if the server moved on.
+          if(this.#hasConnected) {
             if(!this.#buildId || !data.buildId || this.#buildId !== data.buildId) {
               // This page is going away, so the reloaded page reports the connection
               if(ReloadClient.reload({ via: "reconnect"})) {
                 return;
               }
-            } else {
+            } else if(this.#wasDropped) {
               Util.log(`Reconnected without page reload.`);
             }
-          }
-
-          if(data.status === "connected") {
-            this.#buildId = data.buildId;
-            // With multiple windows, only show one connection message
-            if(!this.connectionMessageShown) {
-              Util.log(Util.capitalize(data.status));
-            }
-
-            this.connectionMessageShown = true;
-            this.#ready = true;
-            this.reconnectInterval = ReloadClient.RECONNECT_INTERVAL;
           } else {
-            if(data.status === "disconnected") {
-              this.addReconnectListeners();
-            }
-
             Util.log(Util.capitalize(data.status));
           }
-        } else if(type === "edit") {
-          // Forward server replies only (not requests echoed from other windows)
-          if("ok" in data && !data.edits) {
-            document.dispatchEvent(new CustomEvent("buildawesome:edit", { detail: data }));
-          }
-        } else if(type === "ack") {
-          // acknowledge that a message has been received for removal on client
-          for(let ackFn of this.#ack) {
-            if(typeof ackFn) {
-              ackFn(data.id);
-            }
-          }
+
+          this.#hasConnected = true;
+          this.#wasDropped = false;
+          this.#buildId = data.buildId;
+          this.#clientId = data.clientId;
+          this.#ready = true;
+          this.reconnectInterval = ReloadClient.RECONNECT_INTERVAL;
         } else {
-          Util.log("Unknown event type", data);
+          Util.log(Util.capitalize(data.status));
         }
-      } catch (e) {
-        Util.error(`Error parsing ${event.data}: ${e.message}`, e);
+      } else if(type === "edit") {
+        // Forward server replies only (not requests echoed from other windows)
+        if("ok" in data && !data.edits) {
+          document.dispatchEvent(new CustomEvent("buildawesome:edit", { detail: data }));
+        }
+      } else {
+        Util.log("Unknown event type", data);
       }
-    });
-
-    this.socket.addEventListener("open", () => {
-      // no reconnection when the connect is already open
-      this.removeReconnectListeners();
-    });
-
-    this.socket.addEventListener("close", () => {
-      this.connectionMessageShown = false;
-      this.addReconnectListeners(150);
-    });
-  }
-
-  reconnect(e) {
-    // Only returning to the page should reconnect, not leaving it (#147)
-    if(e?.type === "visibilitychange" && document.visibilityState !== "visible") {
-      return;
+    } catch (e) {
+      Util.error(`Error parsing ${event.data}: ${e.message}`, e);
     }
-
-    if(!e) {
-      // incremental backoff if via setTimeout
-      this.reconnectInterval = Math.min(this.reconnectInterval * 2, ReloadClient.MAX_RECONNECT_INTERVAL);
-    }
-
-    Util.log( "Reconnecting…" );
-    this.#socket = undefined;
-    this.init({ mode: "reconnect" });
   }
 
   async onreload({ subtype, files, build, buildId }) {
@@ -627,23 +617,6 @@ export class ReloadClient {
     document.dispatchEvent(new CustomEvent("buildawesome:reload", { detail: { buildId, changed } }));
   }
 
-  addReconnectListeners(delay = 0) {
-    this.removeReconnectListeners();
-
-    setTimeout(() => {
-      window.addEventListener("visibilitychange", this.reconnectEventCallback);
-      clearTimeout(this.reconnectTimer);
-
-      // TODO maximum 10 reconnect tries
-      this.reconnectTimer = setTimeout(this.reconnectEventCallback, this.reconnectInterval);
-    }, delay);
-  }
-
-  removeReconnectListeners() {
-    clearTimeout(this.reconnectTimer);
-    window.removeEventListener("visibilitychange", this.reconnectEventCallback);
-  }
-
   sendToServer(type, data) {
     if(!this.#ready) {
       throw new Error("Server is not yet ready.");
@@ -651,13 +624,31 @@ export class ReloadClient {
 
     const id = crypto.randomUUID();
 
-    // used to return send(), but send() returns undefined
-    this.socket.send(JSON.stringify({
-      id,
-      type,
-      data,
-      timestamp: Date.now(),
-    }));
+    let url = new URL("events", import.meta.url);
+    url.searchParams.set("clientId", this.#clientId);
+
+    fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id,
+        type,
+        data,
+        timestamp: Date.now(),
+      }),
+    }).then(res => {
+      if(!res.ok) {
+        throw new Error(`${res.status} ${res.statusText}`);
+      }
+      return res.json();
+    }).then(ack => {
+      // acknowledge that a message has been received for removal on client
+      for(let ackFn of this.#ack) {
+        ackFn(ack.id);
+      }
+    }).catch(e => {
+      Util.error(`Error sending ${type} to the server: ${e.message}`, e);
+    });
 
     return { id };
   }

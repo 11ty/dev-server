@@ -153,13 +153,9 @@ test("Client: normalizePath", (t) => {
   t.is(ReloadClient.normalizePath("/about.html"), "/about.html");
 });
 
-test("Client: getSocketUrl keeps pathPrefix from the script URL", (t) => {
-  t.is(ReloadClient.getSocketUrl("http://localhost:8080/about/", "http://localhost:8080/.11ty/reload-client.js"), "ws://localhost:8080/?page=%2Fabout%2F");
-  t.is(ReloadClient.getSocketUrl("https://example.test/prefix/about/", "https://example.test/prefix/.11ty/reload-client.js"), "wss://example.test/prefix/?page=%2Fprefix%2Fabout%2F");
-});
-
-test("Client: getSocketUrl uses reloadPort", (t) => {
-  t.is(ReloadClient.getSocketUrl("http://localhost:8080/prefix/", "http://localhost:8080/prefix/.11ty/reload-client.js?reloadPort=8081"), "ws://localhost:8081/prefix/?page=%2Fprefix%2F");
+test("Client: getEventsUrl keeps pathPrefix from the script URL", (t) => {
+  t.is(ReloadClient.getEventsUrl("http://localhost:8080/about/", "http://localhost:8080/.ba/reload-client.js"), "http://localhost:8080/.ba/events?page=%2Fabout%2F");
+  t.is(ReloadClient.getEventsUrl("https://example.test/prefix/about/", "https://example.test/prefix/.ba/reload-client.js?v=1"), "https://example.test/prefix/.ba/events?page=%2Fprefix%2Fabout%2F");
 });
 
 // A minimal DOM, just enough for the focus helpers.

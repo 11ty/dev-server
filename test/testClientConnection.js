@@ -1,8 +1,9 @@
 import test from "ava";
-import WebSocket from "ws";
+import http from "node:http";
 import DevServer from "../server.js";
-import { parseClientMessage, isHostnameAllowed, isConnectionAllowed, normalizePath, getReloadForPage } from "../server/clientConnection.js";
+import { parseClientMessage, isHostnameAllowed, isConnectionAllowed, normalizePath, getReloadForPage, EventStreamClient } from "../server/clientConnection.js";
 import { ReloadClient } from "../client/reload-client.js";
+import { openEventStream } from "./helpers/eventStream.js";
 
 test("parseClientMessage only returns JSON objects", (t) => {
   t.deepEqual(parseClientMessage(Buffer.from(`{"id":1}`)), { id: 1 });
@@ -59,25 +60,42 @@ function getServer(serverThread, options = {}) {
   return server;
 }
 
-// Resolves with the next message matching `type`.
-function nextMessage(ws, type) {
-  return new Promise((resolve) => {
-    let onMessage = (data) => {
-      let message = JSON.parse(data.toString());
-      if(message.type === type) {
-        ws.off("message", onMessage);
-        resolve(message);
+function eventsUrl(port, query = "") {
+  return `http://localhost:${port}/.ba/events${query}`;
+}
+
+// Opens a stream for `page` and waits for its connection status.
+async function connectPage(port, page) {
+  let stream = await openEventStream(eventsUrl(port, `?page=${encodeURIComponent(page)}`));
+  stream.status = await stream.next("eleventy.status");
+  return stream;
+}
+
+// Plain `http.request`, since `fetch` won’t set `Host` and stream responses never end.
+function request(port, { method = "GET", path = "/.ba/events", headers = {}, body } = {}) {
+  return new Promise((resolve, reject) => {
+    let req = http.request({ port, method, path, headers }, (res) => {
+      if(res.headers["content-type"] === "text/event-stream") {
+        res.destroy();
+        resolve({ statusCode: res.statusCode });
+        return;
       }
-    };
-    ws.on("message", onMessage);
+      let chunks = [];
+      res.on("data", (chunk) => chunks.push(chunk));
+      res.on("end", () => resolve({ statusCode: res.statusCode, body: Buffer.concat(chunks).toString() }));
+    });
+    req.on("error", reject);
+    req.end(body);
   });
 }
 
-// Opens a socket for `page` and waits for its connection status.
-async function connectPage(port, page) {
-  let ws = new WebSocket(`ws://localhost:${port}/?page=${encodeURIComponent(page)}`, { origin: `http://localhost:${port}` });
-  await nextMessage(ws, "eleventy.status");
-  return ws;
+function post(port, clientId, body, headers = {}) {
+  return request(port, {
+    method: "POST",
+    path: `/.ba/events?clientId=${clientId}`,
+    headers: { "Content-Type": "application/json", Origin: `http://localhost:${port}`, ...headers },
+    body,
+  });
 }
 
 test("normalizePath matches the client", (t) => {
@@ -115,13 +133,25 @@ test("getReloadForPage keeps only this page’s templates", (t) => {
   t.is(obj.build.templates.length, 3);
 });
 
-function connect(port, options) {
-  return new Promise((resolve) => {
-    let ws = new WebSocket(`ws://localhost:${port}`, options);
-    ws.once("open", () => resolve({ ws, opened: true }));
-    ws.once("error", () => resolve({ ws, opened: false }));
-  });
-}
+test("EventStreamClient drops a client that stopped reading", (t) => {
+  let writes = [];
+  let destroyed = false;
+  let res = {
+    writableLength: 0,
+    writableEnded: false,
+    write: (chunk) => writes.push(chunk),
+    destroy: () => destroyed = true,
+  };
+  let client = new EventStreamClient(res);
+
+  client.send(`{"a":1}`, "b1");
+  t.deepEqual(writes, [`id: b1\ndata: {"a":1}\n\n`]);
+
+  res.writableLength = 3 * 1024 * 1024;
+  client.send(`{"a":2}`);
+  t.is(writes.length, 1);
+  t.true(destroyed);
+});
 
 for(let serverThread of [true, false]) {
   let mode = serverThread ? "threaded" : "single-threaded";
@@ -130,40 +160,43 @@ for(let serverThread of [true, false]) {
     let server = getServer(serverThread);
     let port = await server.getPort();
 
-    let other = await connect(port, { origin: "https://evil.example" });
-    t.false(other.opened);
+    let other = await request(port, { headers: { Origin: "https://evil.example" } });
+    t.is(other.statusCode, 403);
 
-    let rebound = await connect(port, { origin: `http://evil.example:${port}`, headers: { Host: `evil.example:${port}` } });
-    t.false(rebound.opened);
+    let rebound = await request(port, { headers: { Origin: `http://evil.example:${port}`, Host: `evil.example:${port}` } });
+    t.is(rebound.statusCode, 403);
 
-    let same = await connect(port, { origin: `http://localhost:${port}` });
-    t.true(same.opened);
-    same.ws.close();
+    let same = await request(port, { headers: { Origin: `http://localhost:${port}` } });
+    t.is(same.statusCode, 200);
 
     await server.close();
   });
 
-  test(`Live reload survives messages that aren't JSON objects (${mode})`, async (t) => {
-    let server = getServer(serverThread);
+  test(`Live reload rejects messages that aren't JSON objects from this site (${mode})`, async (t) => {
+    let received = [];
+    let server = getServer(serverThread, { onClientMessage: (message) => received.push(message) });
     let port = await server.getPort();
 
-    let { ws } = await connect(port, { origin: `http://localhost:${port}` });
-    for(let message of ["NOT-VALID-JSON{{{", "null", "1", "[]"]) {
-      ws.send(message);
+    let stream = await connectPage(port, "/");
+    let { clientId } = stream.status;
+
+    for(let body of ["NOT-VALID-JSON{{{", "null", "1", "[]"]) {
+      t.is((await post(port, clientId, body)).statusCode, 400);
     }
-    ws.send(JSON.stringify({ id: "after" }));
+    t.is((await post(port, clientId, "{}", { "Content-Type": "text/plain" })).statusCode, 415);
+    t.is((await post(port, clientId, "{}", { Origin: "https://evil.example" })).statusCode, 403);
+    t.is((await post(port, "missing", "{}")).statusCode, 404);
+    t.is((await post(port, clientId, `{"id":"${"x".repeat(2 * 1024 * 1024)}"}`)).statusCode, 413);
+    t.is((await request(port, { method: "PUT" })).statusCode, 405);
 
-    let ack = await new Promise((resolve) => {
-      ws.on("message", (data) => {
-        let message = JSON.parse(data.toString());
-        if(message.type === "eleventy.ack") {
-          resolve(message);
-        }
-      });
-    });
+    let ack = await post(port, clientId, JSON.stringify({ id: "after" }));
+    t.is(ack.statusCode, 200);
+    t.deepEqual(JSON.parse(ack.body), { type: "eleventy.ack", id: "after" });
 
-    t.is(ack.id, "after");
-    ws.close();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    t.deepEqual(received.map(({ id }) => id), ["after"]);
+
+    stream.close();
     await server.close();
   });
 
@@ -175,7 +208,7 @@ for(let serverThread of [true, false]) {
     let about = await connectPage(port, "/about");
     let other = await connectPage(port, "/other/");
 
-    let reloads = Promise.all([home, about, other].map(ws => nextMessage(ws, "eleventy.reload")));
+    let reloads = Promise.all([home, about, other].map(stream => stream.next("eleventy.reload")));
     server.reload({
       files: ["./_data/site.json"],
       build: {
@@ -196,9 +229,10 @@ for(let serverThread of [true, false]) {
     t.deepEqual(otherReload.files, ["./_data/site.json"]);
     t.true(otherReload.build.outputs);
     t.is(otherReload.buildId, homeReload.buildId);
+    t.is(homeReload.eventId, homeReload.buildId);
 
-    for(let ws of [home, about, other]) {
-      ws.close();
+    for(let stream of [home, about, other]) {
+      stream.close();
     }
     await server.close();
   });
@@ -210,7 +244,7 @@ for(let serverThread of [true, false]) {
     let home = await connectPage(port, "/");
     let about = await connectPage(port, "/about/");
 
-    let reloads = Promise.all([home, about].map(ws => nextMessage(ws, "eleventy.reload")));
+    let reloads = Promise.all([home, about].map(stream => stream.next("eleventy.reload")));
     server.reload({
       files: ["./index.njk", "./about.njk"],
       build: {
@@ -223,6 +257,7 @@ for(let serverThread of [true, false]) {
 
     for(let reload of await reloads) {
       t.deepEqual(reload.build.templates.map(({ url }) => url), ["/", "/about/"]);
+      t.is(reload.eventId, reload.buildId);
     }
 
     home.close();
@@ -238,32 +273,46 @@ for(let serverThread of [true, false]) {
 
     let sender = await connectPage(port, "/");
     let bystander = await connectPage(port, "/");
+    t.not(sender.status.clientId, bystander.status.clientId);
 
-    let bystanderAck = false;
-    bystander.on("message", (data) => {
-      if(JSON.parse(data.toString()).type === "eleventy.ack") {
-        bystanderAck = true;
-      }
-    });
+    let ack = await post(port, sender.status.clientId, JSON.stringify({ id: "m1", type: "hello", data: {}, timestamp: Date.now() }));
+    t.is(JSON.parse(ack.body).id, "m1");
 
-    let senderAck = nextMessage(sender, "eleventy.ack");
-    sender.send(JSON.stringify({ id: "m1", type: "hello", data: {}, timestamp: Date.now() }));
     let message = await clientMessage;
-    await senderAck;
     t.is(message.type, "hello");
-    t.is(typeof message.clientId, "string");
+    t.is(message.clientId, sender.status.clientId);
 
-    let senderReply = nextMessage(sender, "eleventy.msg");
-    let bystanderMessage = nextMessage(bystander, "eleventy.msg");
+    let senderReply = sender.next("eleventy.msg");
+    let bystanderMessage = bystander.next("eleventy.msg");
     server.sendUpdateNotification({ type: "eleventy.msg", message: "reply" }, { clientId: message.clientId });
     server.sendUpdateNotification({ type: "eleventy.msg", message: "everyone" });
 
     t.is((await senderReply).message, "reply");
     t.is((await bystanderMessage).message, "everyone");
-    t.false(bystanderAck);
 
     sender.close();
     bystander.close();
     await server.close();
+  });
+
+  test(`Closing the server ends open streams (${mode})`, async (t) => {
+    let server = getServer(serverThread);
+    let port = await server.getPort();
+
+    let stream = await connectPage(port, "/");
+    t.is(stream.status.eventId, stream.status.buildId);
+
+    let rest = (async () => {
+      let messages = [];
+      let message;
+      while((message = await stream.next())) {
+        messages.push(message);
+      }
+      return messages;
+    })();
+
+    await server.close();
+    let messages = await rest;
+    t.deepEqual(messages.map(({ status }) => status), ["disconnected"]);
   });
 }
