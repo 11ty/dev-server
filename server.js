@@ -18,6 +18,7 @@ import ipAddress from "./server/ipAddress.js";
 import StaticFiles from "./server/staticFiles.js";
 import { isPortInUse, portInUseError } from "./server/portCheck.js";
 import { ReloadChannel } from "./server/clientConnection.js";
+import { PrivilegedChannel, MIN_TOKEN_LENGTH } from "./server/privilegedChannel.js";
 
 const require = createRequire(import.meta.url);
 
@@ -38,6 +39,14 @@ const debug = createDebug("Eleventy:DevServer");
  * @typedef {(context: { url: URL, pattern: URLPattern, patternGroups: Record<string, string | undefined> }) => OnRequestResult | Promise<OnRequestResult>} OnRequestHandler
  * @typedef {{ info(...args: unknown[]): void, log(...args: unknown[]): void, error(...args: unknown[]): void }} Logger
  * @typedef {{ id: string, type: string, data: unknown, timestamp: number, clientId: string }} ClientMessage `clientId` identifies the sending tab for `sendUpdateNotification`.
+ * @typedef {{ clientId: string, send(obj: Record<string, unknown>): void }} WsClientHandle Pushes to one privileged client.
+ * @typedef {{
+ *   token: string,
+ *   sameOrigin?: boolean,
+ *   port?: number,
+ *   dir?: string,
+ *   onMessage?: (message: ClientMessage, client: WsClientHandle) => unknown,
+ * }} WsOptions `onMessage`’s result is the reply. With `sameOrigin: false`, clients connect to `port` (this machine only), which also serves `dir`.
  * @typedef {{ hosts: string[], localhostUrl: string, startupTime: number, version: string, options: Record<string, any> }} StartMessageData
  * @typedef {{ url: string, inputPath: string, outputPath?: string, content?: string }} BuildTemplate
  * @typedef {{
@@ -138,6 +147,8 @@ const DEFAULT_OPTIONS = {
    * @returns {void}
    */
   onClientMessage: function(message) {},
+  /** Privileged WebSocket clients at `/.ba/ws` (see `client/ws-client.js`), authenticated with `token`. */
+  ws: /** @type {false | WsOptions} */ (false),
 };
 
 /**
@@ -186,6 +197,8 @@ export default class DevServer {
   #workerClosed;
   #port;
   #reloadChannel;
+  #privilegedChannel;
+  #privilegedServer;
   #threadClientCount = 0;
   #workerListening = false;
   #workerRestarts = 0;
@@ -289,6 +302,16 @@ export default class DevServer {
     }
 
     this.options.pathPrefix = this.cleanupPathPrefix(this.options.pathPrefix);
+
+    let { ws } = this.options;
+    if(ws) {
+      if(typeof ws.token !== "string" || ws.token.length < MIN_TOKEN_LENGTH) {
+        throw new Error(`The \`ws.token\` option must be a string of at least ${MIN_TOKEN_LENGTH} characters.`);
+      }
+      if(ws.sameOrigin === false && !ws.port) {
+        throw new Error("The `ws.port` option is required when `ws.sameOrigin` is false.");
+      }
+    }
 
     this.#staticFiles?.setOptions(this.options);
   }
@@ -524,6 +547,11 @@ export default class DevServer {
         res.setHeader("Content-Type", mime.getType("js"));
         return res.end(this.#staticFiles.readFile(this.#staticFiles.getMorphdomPath()));
       }
+    } else if(injectedScript === "ws-client.js") {
+      if(this.#privilegedSameOrigin) {
+        res.setHeader("Content-Type", mime.getType("js"));
+        return res.end(this.#staticFiles.getWsClientContents());
+      }
     }
 
     next();
@@ -629,6 +657,8 @@ export default class DevServer {
         port,
         host: this.listenHost,
         buildId: this.buildId,
+        // Same-origin privileged sockets upgrade from the server thread’s HTTP server
+        privileged: this.#privilegedSameOrigin ? { token: /** @type {WsOptions} */ (this.options.ws).token } : undefined,
       },
     });
 
@@ -698,6 +728,8 @@ export default class DevServer {
       if(typeof this.options.onClientMessage === "function") {
         this.options.onClientMessage(msg.parsed);
       }
+    } else if(msg.type === "privilegedMessage") {
+      this.#replyToThread(msg);
     } else if(msg.type === "clientCount") {
       this.#threadClientCount = msg.size;
     } else if(msg.type === "log") {
@@ -1027,6 +1059,105 @@ export default class DevServer {
     } else {
       this._serverListen(port);
     }
+
+    this.#startPrivileged();
+  }
+
+  /* ---------------------------------------------------------------------- *
+   * Privileged clients (`ws` option)
+   * ---------------------------------------------------------------------- */
+
+  get #privilegedSameOrigin() {
+    let { ws } = this.options;
+    return ws ? ws.sameOrigin !== false : false;
+  }
+
+  #startPrivileged() {
+    if(!this.options.ws || (this.#privilegedSameOrigin && this.isThreaded)) {
+      return;
+    }
+
+    this.#privilegedChannel = new PrivilegedChannel({
+      token: this.options.ws.token,
+      allowedHosts: this.options.allowedHosts,
+      logError: (message) => this.logger.error(message),
+      onMessage: (message) => this.#runPrivileged(message),
+    });
+
+    if(this.#privilegedSameOrigin) {
+      this.server.on("upgrade", (req, socket, head) => {
+        if(this.#staticFiles.matchInjectedScript(req.url) === "ws") {
+          this.#privilegedChannel.handleUpgrade(req, socket, head);
+        } else {
+          socket.destroy();
+        }
+      });
+    } else {
+      this.#startPrivilegedServer();
+    }
+  }
+
+  // Its own origin on this machine only: `/.ba/ws`, `/.ba/ws-client.js`, and the `ws.dir` files.
+  #startPrivilegedServer() {
+    let { port, dir } = /** @type {WsOptions} */ (this.options.ws);
+    let folder = this.options.injectedScriptsFolder;
+    let staticFiles = dir ? new StaticFiles(dir, Object.assign({}, this.options, { pathPrefix: "/", aliases: {}, headers: {} })) : undefined;
+
+    let onRequest = (req, res) => {
+      let { pathname } = new URL(req.url, "http://localhost/");
+      if(pathname === `/${folder}/ws-client.js`) {
+        res.setHeader("Content-Type", mime.getType("js"));
+        return res.end(this.#staticFiles.getWsClientContents());
+      }
+      if(staticFiles) {
+        // No transform, so the live reload client isn't injected
+        return staticFiles.serve(req, wrapResponse(res));
+      }
+      res.statusCode = 404;
+      res.end();
+    };
+
+    let { key, cert } = this.options.https;
+    let server = key && cert
+      ? createSecureServer({ allowHTTP1: true, key: fs.readFileSync(key), cert: fs.readFileSync(cert) }, /** @type {any} */ (onRequest))
+      : createServer(onRequest);
+
+    server.on("upgrade", (req, socket, head) => {
+      if(new URL(req.url, "http://localhost/").pathname === `/${folder}/ws`) {
+        this.#privilegedChannel.handleUpgrade(req, socket, head);
+      } else {
+        socket.destroy();
+      }
+    });
+
+    // Like the old `reloadPort`: a port in use is logged and the main server keeps running
+    server.on("error", (err) => this._serverErrorHandler(err));
+    server.listen({ port, host: "127.0.0.1" });
+    this.#privilegedServer = server;
+  }
+
+  // Runs `ws.onMessage` on this thread; its result is the reply.
+  async #runPrivileged(message) {
+    let { onMessage } = /** @type {WsOptions} */ (this.options.ws);
+    if(typeof onMessage !== "function") {
+      return;
+    }
+    let { clientId } = message;
+    return onMessage(message, {
+      clientId,
+      send: (obj) => this.sendUpdateNotification(obj, { privileged: true, clientId }),
+    });
+  }
+
+  async #replyToThread({ id, json }) {
+    let reply;
+    try {
+      let data = await this.#runPrivileged(JSON.parse(json));
+      reply = { type: "privilegedReply", id, ok: true, json: data === undefined ? undefined : JSON.stringify(data) };
+    } catch(e) {
+      reply = { type: "privilegedReply", id, ok: false, message: e?.message || String(e) };
+    }
+    this.#worker?.postMessage(reply);
   }
 
   /** @internal */
@@ -1065,10 +1196,20 @@ export default class DevServer {
   /**
    * Sends a message to every open page, or only to the one with `clientId` (from `onClientMessage`).
    * @param {Record<string, unknown>} obj
-   * @param {{ clientId?: string, byPage?: boolean }} [options] `byPage` is internal.
+   * @param {{ clientId?: string, byPage?: boolean, privileged?: boolean }} [options] `privileged` sends only to `ws` clients; `byPage` is internal.
    */
   sendUpdateNotification(obj, options = {}) {
-    let { clientId, byPage } = options;
+    let { clientId, byPage, privileged } = options;
+    if(privileged) {
+      let json = JSON.stringify(obj);
+      if(this.#privilegedChannel) {
+        this.#privilegedChannel.send(json, { clientId });
+      } else {
+        this.#worker?.postMessage({ type: "privilegedBroadcast", json, clientId });
+      }
+      return;
+    }
+
     let buildId = typeof obj.buildId === "string" ? obj.buildId : undefined;
     if(this.isThreaded) {
       // Serialized here: structured clone throws on values JSON drops (e.g. functions in template `data`)
@@ -1151,6 +1292,11 @@ export default class DevServer {
 
     // Open streams would keep the server from closing
     this.#reloadChannel?.close();
+    this.#privilegedChannel?.close();
+
+    if(this.#privilegedServer?.listening) {
+      promises.push(this._closeServer(this.#privilegedServer));
+    }
 
     if(this._server?.listening) {
       promises.push(this._closeServer(this.server));
