@@ -9,7 +9,6 @@ import mime from "mime";
 import StaticFiles from "./staticFiles.js";
 import { isPortInUse, portInUseError } from "./portCheck.js";
 import { ReloadChannel } from "./clientConnection.js";
-import { PrivilegedChannel } from "./privilegedChannel.js";
 import wrapResponse from "./wrapResponse.js";
 
 // Built into Node 24+, and kept out of the generated types
@@ -31,10 +30,6 @@ const parentPort = /** @type {import("node:worker_threads").MessagePort} */ (may
 class ServerThread {
   #server;
   #reloadChannel;
-  #privileged;
-  #privilegedChannel;
-  #privilegedReplies = new Map();
-  #privilegedId = 0;
   #staticFiles;
   #options;
   #onRequestPatterns = [];
@@ -44,9 +39,8 @@ class ServerThread {
   #closing = false;
   #buildId;
 
-  constructor({ dir, options, onRequestPatterns, hasMiddleware, passthroughCopies, port, host, buildId, privileged }) {
+  constructor({ dir, options, onRequestPatterns, hasMiddleware, passthroughCopies, port, host, buildId }) {
     this.#options = options;
-    this.#privileged = privileged;
     this.#buildId = buildId;
     this.hasMiddleware = hasMiddleware;
     this.startPort = port;
@@ -109,7 +103,6 @@ class ServerThread {
 
     this.#server.on("listening", () => {
       this.#setupReloadNotifier();
-      this.#setupPrivileged();
       parentPort.postMessage({
         type: "listening",
         port: this.#server.address().port,
@@ -173,12 +166,6 @@ class ServerThread {
       if(domDiff) {
         res.setHeader("Content-Type", mime.getType("js"));
         res.end(this.#staticFiles.readFile(this.#staticFiles.getMorphdomPath()));
-        return true;
-      }
-    } else if(injectedScript === "ws-client.js") {
-      if(this.#privileged) {
-        res.setHeader("Content-Type", mime.getType("js"));
-        res.end(this.#staticFiles.getWsClientContents());
         return true;
       }
     }
@@ -328,32 +315,6 @@ class ServerThread {
     });
   }
 
-  // Same-origin privileged sockets; `ws.onMessage` runs on the main thread.
-  #setupPrivileged() {
-    if(!this.#privileged) {
-      return;
-    }
-
-    this.#privilegedChannel = new PrivilegedChannel({
-      token: this.#privileged.token,
-      allowedHosts: this.#options.allowedHosts,
-      logError: (message) => this.#log("error", [message]),
-      onMessage: (message) => new Promise((resolve, reject) => {
-        let id = ++this.#privilegedId;
-        this.#privilegedReplies.set(id, { resolve, reject });
-        parentPort.postMessage({ type: "privilegedMessage", id, json: JSON.stringify(message) });
-      }),
-    });
-
-    this.#server.on("upgrade", (req, socket, head) => {
-      if(this.#staticFiles.matchInjectedScript(req.url) === "ws") {
-        this.#privilegedChannel.handleUpgrade(req, socket, head);
-      } else {
-        socket.destroy();
-      }
-    });
-  }
-
   #closeOne(server) {
     return new Promise((resolve) => {
       server.close(() => resolve(undefined));
@@ -368,7 +329,6 @@ class ServerThread {
 
     // Open streams would keep the server from closing
     this.#reloadChannel?.close();
-    this.#privilegedChannel?.close();
 
     let promises = [];
 
@@ -407,18 +367,6 @@ class ServerThread {
       } else {
         this.#reloadChannel?.send(msg.json, { clientId: msg.clientId, id: msg.buildId });
       }
-    } else if(msg.type === "privilegedReply") {
-      let pending = this.#privilegedReplies.get(msg.id);
-      if(pending) {
-        this.#privilegedReplies.delete(msg.id);
-        if(msg.ok) {
-          pending.resolve(msg.json === undefined ? undefined : JSON.parse(msg.json));
-        } else {
-          pending.reject(new Error(msg.message));
-        }
-      }
-    } else if(msg.type === "privilegedBroadcast") {
-      this.#privilegedChannel?.send(msg.json, { clientId: msg.clientId });
     } else if(msg.type === "passthroughCopies") {
       this.#staticFiles.setPassthroughCopies(msg.entries);
     } else if(msg.type === "close") {

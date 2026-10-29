@@ -143,43 +143,6 @@ Add `data-buildawesome-preserve` to an element to keep morphdom from updating or
 <div data-buildawesome-preserve><!-- client-rendered content --></div>
 ```
 
-`setFullReloadEnabled(false)` blocks full page reloads (in-place updates still apply) and fires `buildawesome:reloadblocked` with `detail: { via, buildId }`; re-enabling does the last blocked reload. While blocked, a page moved by a build fires a cancelable `buildawesome:redirect` with `detail: { from, to }`, falling back to `confirm()` unless a listener calls `preventDefault()`.
-
-`hold(element)` keeps in-place updates from changing or removing an element until the returned function is called, which then brings it up to date (`buildawesome:holdskipped` lists the held elements each update skipped).
-
-```js
-let release = window.BuildAwesomeReload.hold(editor);
-// …later
-await release();
-```
-
-## Privileged clients
-
-The `ws` option accepts authenticated WebSocket connections at `/.ba/ws` for clients that can do more than a page, like an editor. The dev server only checks the token and passes messages to `onMessage`, whose result (or thrown error) is the reply.
-
-```js
-ws: {
-  token, // at least 32 characters; getting it to the client is up to you
-  onMessage(message, client) {
-    client.send({ type: "buildawesome.saved" }); // push to this client only
-    return { ok: true };
-  },
-}
-```
-
-```js
-import { WsClient } from "/.ba/ws-client.js"; // or "@11ty/eleventy-dev-server/ws-client"
-
-let client = new WsClient({ token });
-client.addEventListener("buildawesome.saved", (e) => console.log(e.detail));
-let reply = await client.send("write", { path, content });
-```
-
-- Connections must come from this machine, on the server’s exact origin.
-- A token on the site’s own origin is readable by any script on the site; `sameOrigin: false` serves privileged clients from their own `port` (with static files from `dir`) instead.
-- `sendUpdateNotification(obj, { privileged: true })` pushes to every privileged client, never to pages.
-- Messages are resent after a reconnect and a repeated id gets its cached reply, but that cache doesn’t survive a server restart, so make `onMessage` safe to run twice.
-
 ## Tests
 
 ```

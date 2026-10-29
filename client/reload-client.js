@@ -125,13 +125,6 @@ export class ReloadClient {
   #wasDropped = false;
 
   static RELOAD_ENABLED = true;
-  static FULL_RELOAD_ENABLED = true;
-  static #pendingReload; // the last full reload blocked by `setFullReloadEnabled(false)`
-  static #latestBuildId;
-  static #latestContent; // this page’s HTML from the latest morph, to catch up held subtrees
-  static #held = new Set();
-  static #stale = new WeakSet(); // held elements a morph skipped
-  static #skipped = new Set(); // held elements the current morph skipped
   static CACHE_BUST_PARAM = "_bust";
   static TAG_NAME = "reload-client";
   static RECONNECT_INTERVAL = 2000; // ms
@@ -153,64 +146,6 @@ export class ReloadClient {
     ReloadClient.RELOAD_ENABLED = Boolean(enabled);
   }
 
-  // Blocks full page reloads (morphs still apply); re-enabling does the last blocked reload.
-  setFullReloadEnabled(enabled) {
-    ReloadClient.FULL_RELOAD_ENABLED = Boolean(enabled);
-
-    let pending = ReloadClient.#pendingReload;
-    if(enabled && pending) {
-      ReloadClient.#pendingReload = undefined;
-      ReloadClient.reload(pending);
-    }
-  }
-
-  // Keeps morphs from updating or removing `element` until the returned function releases it.
-  hold(element) {
-    ReloadClient.#held.add(element);
-    return () => ReloadClient.release(element);
-  }
-
-  // Morphs a held subtree a build skipped to match the latest HTML, removing it if the build did.
-  static async release(element) {
-    if(!this.#held.delete(element) || !this.#stale.has(element)) {
-      return;
-    }
-    this.#stale.delete(element);
-
-    if(!element.isConnected || !this.#latestContent) {
-      return;
-    }
-
-    let latest = new DOMParser().parseFromString(this.#latestContent, "text/html");
-    let match = this.findMatch(element, document, latest);
-    if(!match) {
-      element.remove();
-      return;
-    }
-
-    // @ts-expect-error Served next to this file at runtime
-    const { default: morphdom } = await import(`./morphdom.js`);
-    morphdom(element, document.importNode(match, true), this.getMorphOptions());
-  }
-
-  // Finds the element in `otherDoc` at the same place as `element` in `doc` (same tag, by id or position).
-  static findMatch(element, doc, otherDoc) {
-    let path = this.getFocusPath(element, doc);
-    let match = path ? this.findByFocusPath(path, otherDoc) : undefined;
-    if(match?.tagName === element.tagName) {
-      return match;
-    }
-  }
-
-  static #skipHeld(node) {
-    if(this.#held.has(node)) {
-      this.#stale.add(node);
-      this.#skipped.add(node);
-      return true;
-    }
-    return false;
-  }
-
   // Next to this script so `pathPrefix` is kept, with `?page=` so the server can scope reloads.
   static getEventsUrl(documentHref, scriptHref) {
     let url = new URL("events", scriptHref);
@@ -222,24 +157,8 @@ export class ReloadClient {
     if(!this.RELOAD_ENABLED) {
       return false;
     }
-    if(!this.FULL_RELOAD_ENABLED) {
-      this.#pendingReload = options;
-      document.dispatchEvent(new CustomEvent("buildawesome:reloadblocked", {
-        detail: { via: options.via, buildId: this.#latestBuildId },
-      }));
-      return false;
-    }
     Util.fullPageReload(options);
     return true;
-  }
-
-  // With full reloads off, asks before following a moved page; `preventDefault()` hands the decision to the page.
-  static confirmRedirect({ from, to }) {
-    let event = new CustomEvent("buildawesome:redirect", { cancelable: true, detail: { from, to } });
-    if(!document.dispatchEvent(event)) {
-      return false;
-    }
-    return confirm(`This page moved to ${to}. Go there now?`);
   }
 
   // Treats `/about`, `/about/`, `/about/index.html`, and percent-encoded forms as the same page.
@@ -418,68 +337,6 @@ export class ReloadClient {
     }
   }
 
-  static getMorphOptions() {
-    return {
-      onBeforeNodeDiscarded: (node) => {
-        // Don’t discard stylesheets inserted via script! (e.g. Web Awesome)
-        // TODO maybe more defensive?
-        if((node?.tagName || "").toLowerCase() === "link") {
-          return false;
-        }
-
-        if(node?.hasAttribute?.(ReloadClient.PRESERVE_ATTR) || ReloadClient.#skipHeld(node)) {
-          return false;
-        }
-      },
-      onBeforeElUpdated: (fromEl, toEl) => {
-        if(fromEl.hasAttribute("inert") || fromEl.hasAttribute(ReloadClient.PRESERVE_ATTR) || ReloadClient.#skipHeld(fromEl)) {
-          return false;
-        }
-
-        if(fromEl.matches(':is(input,textarea,select):focus')) {
-          return false;
-        }
-
-        if (fromEl.nodeName === "SCRIPT" && toEl.nodeName === "SCRIPT") {
-          if(toEl.innerHTML !== fromEl.innerHTML) {
-            ReloadClient.reload({ via: "<script> modified"});
-          }
-
-          return false;
-        }
-
-        if(Util.isLinkNodeMatch(fromEl, toEl)) {
-          return false;
-        }
-
-        return true;
-      },
-      addChild: (parent, child) => {
-        // Declarative Shadow DOM https://github.com/11ty/eleventy-dev-server/issues/90
-        if(child.nodeName === "TEMPLATE" && child.hasAttribute("shadowrootmode")) {
-          let root = parent.shadowRoot;
-          if(root) {
-            // remove all shadow root children
-            while(root.firstChild) {
-              root.removeChild(root.firstChild);
-            }
-          }
-          for(let newChild of child.content.childNodes) {
-            root.appendChild(newChild);
-          }
-        } else {
-          parent.appendChild(child);
-        }
-      },
-      onNodeAdded: (node) => {
-        if (node.nodeName === 'SCRIPT') {
-          ReloadClient.reload({ via: "<script> added"});
-        }
-      },
-      // Removed an `onElUpdated` bit that reattached custom elements (to retrigger connectedCallback methods?)
-    };
-  }
-
   static reloadTypes = {
     css: (files, build = {}) => {
       // Initiate a full page refresh if a CSS change is made but does match any stylesheet url
@@ -533,28 +390,77 @@ export class ReloadClient {
         // Important: using `./` allows the `.ba` folder name to be changed
         // @ts-expect-error Served next to this file at runtime
         const { default: morphdom } = await import(`./morphdom.js`);
-        ReloadClient.#skipped.clear();
 
         for (let {url, inputPath, content} of domdiffTemplates) {
           // Notable limitation: this won’t re-run script elements or JavaScript page lifecycle events (load/DOMContentLoaded)
           morphed = true;
 
           let focusState = ReloadClient.captureFocus();
-          ReloadClient.#latestContent = content;
 
-          morphdom(document.documentElement, content, Object.assign(ReloadClient.getMorphOptions(), {
+          morphdom(document.documentElement, content, {
             childrenOnly: false,
-          }));
+            onBeforeNodeDiscarded: function(node) {
+              // Don’t discard stylesheets inserted via script! (e.g. Web Awesome)
+              // TODO maybe more defensive?
+              if((node?.tagName || "").toLowerCase() === "link") {
+                return false;
+              }
+
+              if(node?.hasAttribute?.(ReloadClient.PRESERVE_ATTR)) {
+                return false;
+              }
+            },
+            onBeforeElUpdated: (fromEl, toEl) => {
+              if(fromEl.hasAttribute("inert") || fromEl.hasAttribute(ReloadClient.PRESERVE_ATTR)) {
+                return false;
+              }
+
+              if(fromEl.matches(':is(input,textarea,select):focus')) {
+                return false;
+              }
+
+              if (fromEl.nodeName === "SCRIPT" && toEl.nodeName === "SCRIPT") {
+                if(toEl.innerHTML !== fromEl.innerHTML) {
+                  ReloadClient.reload({ via: "<script> modified"});
+                }
+
+                return false;
+              }
+
+              if(Util.isLinkNodeMatch(fromEl, toEl)) {
+                return false;
+              }
+
+              return true;
+            },
+            addChild: (parent, child) => {
+              // Declarative Shadow DOM https://github.com/11ty/eleventy-dev-server/issues/90
+              if(child.nodeName === "TEMPLATE" && child.hasAttribute("shadowrootmode")) {
+                let root = parent.shadowRoot;
+                if(root) {
+                  // remove all shadow root children
+                  while(root.firstChild) {
+                    root.removeChild(root.firstChild);
+                  }
+                }
+                for(let newChild of child.content.childNodes) {
+                  root.appendChild(newChild);
+                }
+              } else {
+                parent.appendChild(child);
+              }
+            },
+            onNodeAdded: function (node) {
+              if (node.nodeName === 'SCRIPT') {
+                ReloadClient.reload({ via: "<script> added"});
+              }
+            },
+            // Removed an `onElUpdated` bit that reattached custom elements (to retrigger connectedCallback methods?)
+          });
 
           Util.matchRootAttributes(content);
           await ReloadClient.restoreFocus(focusState);
           Util.log(`HTML delta applied without page reload.`);
-        }
-
-        if(ReloadClient.#skipped.size > 0) {
-          document.dispatchEvent(new CustomEvent("buildawesome:holdskipped", {
-            detail: { elements: [...ReloadClient.#skipped], buildId: ReloadClient.#latestBuildId },
-          }));
         }
       } catch(e) {
         Util.error( "Morphdom error", e );
@@ -689,14 +595,11 @@ export class ReloadClient {
 
   async onreload({ subtype, files, build, buildId }) {
     this.#buildId = buildId;
-    ReloadClient.#latestBuildId = buildId;
 
     // A page this build moved (e.g. its permalink changed): go where it is now, not back to where it was
     let redirect = (build?.redirects || []).find(({ from }) => from === document.location.pathname);
     if(redirect) {
-      if(ReloadClient.FULL_RELOAD_ENABLED || ReloadClient.confirmRedirect(redirect)) {
-        document.location.assign(redirect.to);
-      }
+      document.location.assign(redirect.to);
       return;
     }
 
