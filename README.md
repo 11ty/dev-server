@@ -120,7 +120,7 @@ Live reload only accepts connections from pages served by the dev server, on `lo
 
 The injected client is available as `window.BuildAwesomeReload` (alias `window.EleventyReload`; `sendToServer(type, data)` returns `{ id }`) and dispatches these events on `document`:
 
-- `buildawesome:reload` after every rebuild (including in-place morphdom patches), with `detail: { buildId, changed }`. `changed` is `false` when the rebuild didn’t touch the current page.
+- `buildawesome:reload` after every rebuild (including in-place updates), with `detail: { buildId, changed }`. `changed` is `false` when the rebuild didn’t touch the current page.
 - `buildawesome:beforereload` before the current page is updated in place (not for CSS-only builds, full reloads, or unchanged pages), with `detail: { buildId, waitUntil(promise) }`. The update waits for promises passed to `waitUntil`, up to 1000ms.
 - `buildawesome:edit` for edit replies from the server, with `detail` set to the full message: `{ type, id, ok: true, results }` or `{ type, id, ok: false, errors }`. Match `id` against the one returned by `sendToServer`.
 
@@ -137,7 +137,7 @@ onClientMessage(message) {
 }
 ```
 
-Add `data-buildawesome-preserve` to an element to keep morphdom from updating or removing it (and its children) during in-place updates (a full page reload still replaces it).
+Add `data-buildawesome-preserve` to an element to keep in-place updates from changing or removing it (and its children) during in-place updates (a full page reload still replaces it).
 
 ```html
 <div data-buildawesome-preserve><!-- client-rendered content --></div>

@@ -165,10 +165,10 @@ class ServerThread {
         res.end(this.#staticFiles.getReloadClientContents());
         return true;
       }
-    } else if(injectedScript === "morphdom.js") {
+    } else if(injectedScript === "idiomorph.js") {
       if(domDiff) {
         res.setHeader("Content-Type", mime.getType("js"));
-        res.end(this.#staticFiles.readFile(this.#staticFiles.getMorphdomPath()));
+        res.end(this.#staticFiles.readFile(this.#staticFiles.getIdiomorphPath()));
         return true;
       }
     }

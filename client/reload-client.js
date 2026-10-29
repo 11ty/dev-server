@@ -30,25 +30,93 @@ class Util {
     return word.substr(0, 1).toUpperCase() + word.substr(1);
   }
 
-  static matchRootAttributes(htmlContent) {
-    // Workaround for morphdom bug with attributes on <html> https://github.com/11ty/eleventy-dev-server/issues/6
-    // Note also `childrenOnly: true` above
-    const parser = new DOMParser();
-    let parsed = parser.parseFromString(htmlContent, "text/html");
-    let parsedDoc = parsed.documentElement;
-    let newAttrs = parsedDoc.getAttributeNames();
+  // Declarative Shadow DOM https://github.com/11ty/eleventy-dev-server/issues/90
+  static isShadowRootTemplate(node) {
+    return node?.nodeName === "TEMPLATE" && node.hasAttribute("shadowrootmode");
+  }
 
-    let docEl = document.documentElement;
-    // Remove old
-    let removedAttrs = docEl.getAttributeNames().filter(name => !newAttrs.includes(name));
-    for(let attr of removedAttrs) {
-      docEl.removeAttribute(attr);
+  // `DOMParser` leaves `<template shadowrootmode>` inert, so morph (or attach) the shadow root it declares.
+  static morphShadowRoot(host, template, Idiomorph, options) {
+    let root = host.shadowRoot;
+    if(!root) {
+      try {
+        root = host.attachShadow({ mode: template.getAttribute("shadowrootmode") });
+      } catch(e) {
+        // Closed shadow roots can’t be reached
+        return;
+      }
     }
+    Idiomorph.morph(root, template.content, { ...options, morphStyle: "innerHTML" });
+  }
 
-    // Add new
-    for(let attr of newAttrs) {
-      docEl.setAttribute(attr, parsedDoc.getAttribute(attr) ?? "");
-    }
+  static getMorphOptions(Idiomorph) {
+    let options = {
+      // Match `<head>` children in place like `<body>`; the default merge appends new nodes, which reorders stylesheets
+      head: { style: "morph" },
+      callbacks: {
+        beforeNodeAdded: (node) => {
+          return !Util.isShadowRootTemplate(node);
+        },
+        afterNodeAdded: (node) => {
+          if(node.nodeType !== Node.ELEMENT_NODE) {
+            return;
+          }
+
+          if(node.nodeName === "SCRIPT" || node.querySelector("script")) {
+            ReloadClient.reload({ via: "<script> added"});
+          }
+
+          for(let template of node.querySelectorAll("template[shadowrootmode]")) {
+            Util.morphShadowRoot(template.parentElement, template, Idiomorph, options);
+            template.remove();
+          }
+        },
+        beforeNodeRemoved: (node) => {
+          // Don’t discard stylesheets inserted via script! (e.g. Web Awesome)
+          // TODO maybe more defensive?
+          if((node?.tagName || "").toLowerCase() === "link") {
+            return false;
+          }
+
+          if(node?.hasAttribute?.(ReloadClient.PRESERVE_ATTR)) {
+            return false;
+          }
+        },
+        beforeNodeMorphed: (fromEl, toEl) => {
+          if(fromEl.nodeType !== Node.ELEMENT_NODE) {
+            return true;
+          }
+
+          if(fromEl.hasAttribute("inert") || fromEl.hasAttribute(ReloadClient.PRESERVE_ATTR)) {
+            return false;
+          }
+
+          if(fromEl.matches(':is(input,textarea,select):focus')) {
+            return false;
+          }
+
+          if (fromEl.nodeName === "SCRIPT" && toEl.nodeName === "SCRIPT") {
+            if(toEl.innerHTML !== fromEl.innerHTML) {
+              ReloadClient.reload({ via: "<script> modified"});
+            }
+
+            return false;
+          }
+
+          if(Util.isLinkNodeMatch(fromEl, toEl)) {
+            return false;
+          }
+
+          let template = [...toEl.children].find(child => Util.isShadowRootTemplate(child));
+          if(template) {
+            Util.morphShadowRoot(fromEl, template, Idiomorph, options);
+          }
+
+          return true;
+        },
+      },
+    };
+    return options;
   }
 
   static isLinkNodeMatch(from, to) {
@@ -72,10 +140,20 @@ class Util {
       return false;
     }
 
-    let oldUrl = new URL(from.href);
-    let newUrl = new URL(to.href);
+    let oldHref = from.getAttribute("href");
+    let newHref = to.getAttribute("href");
+    if(oldHref === null || newHref === null) {
+      return false;
+    }
 
-    // morphdom wants to force href="style.css?_11ty" => href="style.css"
+    // Resolved against this page, since the parsed document may not share its base URL
+    let oldUrl = URL.parse(oldHref, document.baseURI);
+    let newUrl = URL.parse(newHref, document.baseURI);
+    if(!oldUrl || !newUrl) {
+      return false;
+    }
+
+    // The morph would otherwise force href="style.css?_11ty" => href="style.css"
     let paramName = ReloadClient.CACHE_BUST_PARAM;
     let isErasing = oldUrl.searchParams.has(paramName) && !newUrl.searchParams.has(paramName);
     if(!isErasing) {
@@ -130,6 +208,8 @@ export class ReloadClient {
   static EVENT_PREFIXES = ["eleventy.", "buildawesome."];
   static PRESERVE_ATTR = "data-buildawesome-preserve";
   static BEFORE_RELOAD_TIMEOUT = 1000; // ms
+  /** @internal Relative to this script so the `.11ty` folder name can change (tests point it at the package). */
+  static IDIOMORPH_URL = "./idiomorph.js";
 
   static getEventName(type = "") {
     let prefix = ReloadClient.EVENT_PREFIXES.find(prefix => type.startsWith(prefix));
@@ -266,7 +346,7 @@ export class ReloadClient {
     return ["INPUT", "TEXTAREA"].includes(el?.tagName);
   }
 
-  // Records what has focus so it can be restored after morphdom replaces it.
+  // Records what has focus so it can be restored after the morph replaces it.
   static captureFocus(doc = document) {
     let element = /** @type {any} */ (doc.activeElement);
     if(!element || element === doc.body) {
@@ -278,7 +358,7 @@ export class ReloadClient {
       element,
       tagName: element.tagName,
       path: this.getFocusPath(element, doc),
-      // Survives the structural changes that make morphdom replace an element.
+      // Survives the structural changes that make the morph replace an element.
       tagIndex: [...doc.getElementsByTagName(element.localName)].indexOf(element),
       // Inner shadow DOM nodes have no path; only the host is found again.
       shadowElement: element.shadowRoot?.activeElement || undefined,
@@ -394,9 +474,7 @@ export class ReloadClient {
       }
 
       try {
-        // Important: using `./` allows the `.11ty` folder name to be changed
-        // @ts-expect-error Served next to this file at runtime
-        const { default: morphdom } = await import(`./morphdom.js`);
+        const { Idiomorph } = await import(ReloadClient.IDIOMORPH_URL);
 
         for (let {url, inputPath, content} of domdiffTemplates) {
           // Notable limitation: this won’t re-run script elements or JavaScript page lifecycle events (load/DOMContentLoaded)
@@ -404,73 +482,15 @@ export class ReloadClient {
 
           let focusState = ReloadClient.captureFocus();
 
-          morphdom(document.documentElement, content, {
-            childrenOnly: false,
-            onBeforeNodeDiscarded: function(node) {
-              // Don’t discard stylesheets inserted via script! (e.g. Web Awesome)
-              // TODO maybe more defensive?
-              if((node?.tagName || "").toLowerCase() === "link") {
-                return false;
-              }
+          // Morphing from a parsed `<html>` (not a string) keeps its attributes in sync and allows an omitted `</html>`
+          let { documentElement } = new DOMParser().parseFromString(content, "text/html");
+          Idiomorph.morph(document.documentElement, documentElement, Util.getMorphOptions(Idiomorph));
 
-              if(node?.hasAttribute?.(ReloadClient.PRESERVE_ATTR)) {
-                return false;
-              }
-            },
-            onBeforeElUpdated: (fromEl, toEl) => {
-              if(fromEl.hasAttribute("inert") || fromEl.hasAttribute(ReloadClient.PRESERVE_ATTR)) {
-                return false;
-              }
-
-              if(fromEl.matches(':is(input,textarea,select):focus')) {
-                return false;
-              }
-
-              if (fromEl.nodeName === "SCRIPT" && toEl.nodeName === "SCRIPT") {
-                if(toEl.innerHTML !== fromEl.innerHTML) {
-                  ReloadClient.reload({ via: "<script> modified"});
-                }
-
-                return false;
-              }
-
-              if(Util.isLinkNodeMatch(fromEl, toEl)) {
-                return false;
-              }
-
-              return true;
-            },
-            addChild: (parent, child) => {
-              // Declarative Shadow DOM https://github.com/11ty/eleventy-dev-server/issues/90
-              if(child.nodeName === "TEMPLATE" && child.hasAttribute("shadowrootmode")) {
-                let root = parent.shadowRoot;
-                if(root) {
-                  // remove all shadow root children
-                  while(root.firstChild) {
-                    root.removeChild(root.firstChild);
-                  }
-                }
-                for(let newChild of child.content.childNodes) {
-                  root.appendChild(newChild);
-                }
-              } else {
-                parent.appendChild(child);
-              }
-            },
-            onNodeAdded: function (node) {
-              if (node.nodeName === 'SCRIPT') {
-                ReloadClient.reload({ via: "<script> added"});
-              }
-            },
-            // Removed an `onElUpdated` bit that reattached custom elements (to retrigger connectedCallback methods?)
-          });
-
-          Util.matchRootAttributes(content);
           await ReloadClient.restoreFocus(focusState);
           Util.log(`HTML delta applied without page reload.`);
         }
       } catch(e) {
-        Util.error( "Morphdom error", e );
+        Util.error( "Idiomorph error", e );
       }
 
       if (!morphed) {
@@ -623,7 +643,7 @@ export class ReloadClient {
 
     let changed = Boolean(await ReloadClient.reloadTypes[subtype](files, build));
 
-    // Morphdom patches skip page reloads, so let page scripts know a rebuild was applied (`changed` is false when this page was untouched)
+    // In-place updates skip page reloads, so let page scripts know a rebuild was applied (`changed` is false when this page was untouched)
     document.dispatchEvent(new CustomEvent("buildawesome:reload", { detail: { buildId, changed } }));
   }
 

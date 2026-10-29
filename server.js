@@ -524,10 +524,10 @@ export default class DevServer {
         res.setHeader("Content-Type", mime.getType("js"));
         return res.end(this.#staticFiles.getReloadClientContents());
       }
-    } else if(injectedScript === "morphdom.js") {
+    } else if(injectedScript === "idiomorph.js") {
       if(this.options.domDiff) {
         res.setHeader("Content-Type", mime.getType("js"));
-        return res.end(this.#staticFiles.readFile(this.#staticFiles.getMorphdomPath()));
+        return res.end(this.#staticFiles.readFile(this.#staticFiles.getIdiomorphPath()));
       }
     }
 

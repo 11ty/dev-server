@@ -212,14 +212,14 @@ test("Injected scripts are served off the main thread", async (t) => {
   let { threaded, single } = await inBothModes({}, async (server) => {
     return {
       client: await request(server, "/.11ty/reload-client.js"),
-      morphdom: await request(server, "/.11ty/morphdom.js"),
+      idiomorph: await request(server, "/.11ty/idiomorph.js"),
     };
   });
 
   t.is(threaded.client.statusCode, 200);
-  t.is(threaded.morphdom.statusCode, 200);
+  t.is(threaded.idiomorph.statusCode, 200);
   t.is(threaded.client.body, single.client.body);
-  t.is(threaded.morphdom.body, single.morphdom.body);
+  t.is(threaded.idiomorph.body, single.idiomorph.body);
 });
 
 // Serial: blocking the main thread would stall other tests in this file running at the same time
@@ -729,7 +729,7 @@ test("Injected scripts and live reload are served under pathPrefix in both modes
     let page = await request(server, "/prefix/sample");
     let client = await request(server, "/prefix/.11ty/reload-client.js");
     let legacyClient = await request(server, "/.11ty/reload-client.js");
-    let morphdom = await request(server, "/prefix/.11ty/morphdom.js");
+    let idiomorph = await request(server, "/prefix/.11ty/idiomorph.js");
 
     let port = await server.getPort();
     let opened = await new Promise((resolve) => {
@@ -741,15 +741,15 @@ test("Injected scripts and live reload are served under pathPrefix in both modes
       socket.addEventListener("error", () => resolve(false));
     });
 
-    return { page, client, legacyClient, morphdom, opened };
+    return { page, client, legacyClient, idiomorph, opened };
   });
 
-  for(let { page, client, legacyClient, morphdom, opened } of Object.values(results)) {
+  for(let { page, client, legacyClient, idiomorph, opened } of Object.values(results)) {
     t.true(page.body.includes(`src="/prefix/.11ty/reload-client.js"`));
     t.is(client.statusCode, 200);
     t.true(client.body.includes("class ReloadClient"));
     t.is(legacyClient.statusCode, 200);
-    t.is(morphdom.statusCode, 200);
+    t.is(idiomorph.statusCode, 200);
     t.true(opened);
   }
 });

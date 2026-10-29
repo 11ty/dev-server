@@ -392,8 +392,8 @@ export default class StaticFiles {
     return this.getFileContents("./client/reload-client.js");
   }
 
-  getMorphdomPath() {
-    return require.resolve("morphdom").replace("morphdom.js", "morphdom-esm.js");
+  getIdiomorphPath() {
+    return require.resolve("idiomorph/dist/idiomorph.esm.js");
   }
 
   /**
@@ -416,10 +416,10 @@ export default class StaticFiles {
     return this.getServerPath(`${this.options.injectedScriptsFolder}/${filename}`);
   }
 
-  // Returns `reload-client.js` or `morphdom.js` for their URLs (with or without `pathPrefix`), otherwise `undefined`.
+  // Returns `reload-client.js` or `idiomorph.js` for their URLs (with or without `pathPrefix`), otherwise `undefined`.
   matchInjectedScript(url) {
     let { pathname } = new URL(url, "http://localhost/");
-    for(let filename of ["reload-client.js", "morphdom.js"]) {
+    for(let filename of ["reload-client.js", "idiomorph.js"]) {
       // Unprefixed paths still work for pages cached with the old script URL
       if(pathname === this.getInjectedScriptPath(filename) || pathname === `/${this.options.injectedScriptsFolder}/${filename}`) {
         return filename;
