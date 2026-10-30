@@ -137,6 +137,8 @@ onClientMessage(message) {
 }
 ```
 
+In-place updates only apply what changed in the HTML since the page was served, so attributes, text, and elements changed by page scripts are kept.
+
 Add `data-buildawesome-preserve` to an element to keep in-place updates from changing or removing it (and its children) during in-place updates (a full page reload still replaces it).
 
 ```html

@@ -9,7 +9,7 @@ import WebSocket, { WebSocketServer } from "ws";
 
 import StaticFiles from "./staticFiles.js";
 import { isPortInUse, portInUseError } from "./portCheck.js";
-import { parseClientMessage, isConnectionAllowed, registerConnection, getConnection, sendReloadByPage } from "./clientConnection.js";
+import { parseClientMessage, isConnectionAllowed, registerConnection, getConnection, sendReloadByPage, PageBaselines } from "./clientConnection.js";
 import wrapResponse from "./wrapResponse.js";
 
 // Built into Node 24+, and kept out of the generated types
@@ -41,6 +41,7 @@ class ServerThread {
   #portRetryCount = 0;
   #closing = false;
   #buildId;
+  #baselines = new PageBaselines();
 
   constructor({ dir, options, onRequestPatterns, hasMiddleware, passthroughCopies, port, host, buildId }) {
     this.#options = options;
@@ -132,6 +133,10 @@ class ServerThread {
       let isXHR = req.headers["sec-fetch-mode"] && req.headers["sec-fetch-mode"] != "navigate";
 
       if(this.#options.liveReload !== false && !isXHR) {
+        if(this.#options.domDiff && res.statusCode === 200) {
+          this.#baselines.set(new URL(req.url, "http://localhost/").pathname, content);
+        }
+
         let scriptContents = this.#staticFiles.getReloadClientContents();
         let integrityHash = this.#staticFiles.sri(scriptContents);
 
@@ -444,7 +449,9 @@ class ServerThread {
         this.#buildId = msg.buildId;
       }
       if(msg.byPage) {
-        sendReloadByPage(this.#updateServer?.clients || [], JSON.parse(msg.json), WebSocket.OPEN);
+        sendReloadByPage(this.#updateServer?.clients || [], this.#baselines.apply(JSON.parse(msg.json)), WebSocket.OPEN);
+      } else if(msg.hasTemplates) {
+        this.#broadcastJson(JSON.stringify(this.#baselines.apply(JSON.parse(msg.json))), undefined, msg.clientId);
       } else {
         this.#broadcastJson(msg.json, undefined, msg.clientId);
       }

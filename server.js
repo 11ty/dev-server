@@ -18,7 +18,7 @@ import wrapResponse from "./server/wrapResponse.js";
 import ipAddress from "./server/ipAddress.js";
 import StaticFiles from "./server/staticFiles.js";
 import { isPortInUse, portInUseError } from "./server/portCheck.js";
-import { parseClientMessage, isConnectionAllowed, registerConnection, getConnection, sendReloadByPage } from "./server/clientConnection.js";
+import { parseClientMessage, isConnectionAllowed, registerConnection, getConnection, sendReloadByPage, PageBaselines } from "./server/clientConnection.js";
 
 const require = createRequire(import.meta.url);
 
@@ -195,6 +195,7 @@ export default class DevServer {
   #workerListening = false;
   #workerRestarts = 0;
   #proxyResponses = new Map();
+  #baselines = new PageBaselines(); // unused in threaded mode, where pages are served on the server thread
 
   // `buildId` names the current content: new per process, bumped per reload. Clients compare
   // it on reconnect to see if they missed a build—see client/reload-client.js
@@ -541,6 +542,10 @@ export default class DevServer {
       let isXHR = req.headers["sec-fetch-mode"] && req.headers["sec-fetch-mode"] != "navigate";
 
       if(this.options.liveReload !== false && !isXHR) {
+        if(this.options.domDiff && res.statusCode === 200) {
+          this.#baselines.set(new URL(req.url, "http://localhost/").pathname, content);
+        }
+
         let scriptContents = this.#staticFiles.getReloadClientContents();
         let integrityHash = this.#staticFiles.sri(scriptContents);
 
@@ -1119,13 +1124,17 @@ export default class DevServer {
     let { clientId, include, byPage } = options;
     if(this.isThreaded) {
       // Serialized here: structured clone throws on values JSON drops (e.g. functions in template `data`)
-      this.#worker?.postMessage({ type: "broadcast", json: JSON.stringify(obj), buildId: obj.buildId, clientId, byPage });
+      let templates = /** @type {any} */ (obj.build)?.templates;
+      let hasTemplates = Array.isArray(templates) && templates.length > 0;
+      this.#worker?.postMessage({ type: "broadcast", json: JSON.stringify(obj), buildId: obj.buildId, clientId, byPage, hasTemplates });
       return;
     }
 
     if(!this.#updateServer?.clients) {
       return;
     }
+
+    obj = this.#baselines.apply(obj);
 
     if(byPage) {
       sendReloadByPage(this.#updateServer.clients, obj, WebSocket.OPEN);

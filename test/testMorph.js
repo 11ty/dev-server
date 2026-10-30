@@ -4,7 +4,7 @@ import { ReloadClient } from "../client/reload-client.js";
 
 ReloadClient.IDIOMORPH_URL = import.meta.resolve("idiomorph");
 
-const GLOBALS = ["window", "document", "DOMParser", "Node", "Element", "Document", "CSS", "customElements", "CustomEvent"];
+const GLOBALS = ["window", "document", "DOMParser", "Node", "NodeFilter", "Element", "Document", "CSS", "customElements", "CustomEvent"];
 
 // Loads `html` into a fresh global DOM; tests are serial since the client reads globals.
 function load(html) {
@@ -16,8 +16,8 @@ function load(html) {
   return window.document;
 }
 
-// Applies `html` as an in-place update to the current page and returns any full reloads it asked for.
-async function morph(html) {
+// Applies `html` as an in-place update to the current page (served as `previousContent`) and returns any full reloads it asked for.
+async function morph(html, previousContent) {
   let reloads = [];
   let originalReload = ReloadClient.reload;
   ReloadClient.reload = ({ via }) => {
@@ -28,7 +28,7 @@ async function morph(html) {
   try {
     await ReloadClient.reloadTypes.default([], {
       outputs: true,
-      templates: [{ url: "/", inputPath: "./index.njk", content: html }],
+      templates: [{ url: "/", inputPath: "./index.njk", content: html, previousContent }],
     });
   } finally {
     ReloadClient.reload = originalReload;
@@ -173,4 +173,146 @@ test.serial("Morph: attaches declarative shadow roots for new elements, includin
   t.is(outer.querySelector("template"), null);
   t.is(outer.shadowRoot.querySelector("b").textContent, "Outer");
   t.is(outer.shadowRoot.querySelector("inner-el").shadowRoot.innerHTML, `<i>Inner</i>`);
+});
+
+// Loads `html` as served, lets `script` change it like a page script would, then applies `next`.
+async function update(html, script, next) {
+  let doc = load(html);
+  script(doc);
+  let reloads = await morph(next, html);
+  return { doc, reloads };
+}
+
+test.serial("Three-way: keeps `<html>` attributes set by page scripts and applies source changes", async (t) => {
+  let { doc } = await update(
+    `<!doctype html><html lang="en"><body></body></html>`,
+    (doc) => doc.documentElement.setAttribute("data-theme", "dark"),
+    `<!doctype html><html lang="fr"><body></body></html>`,
+  );
+
+  t.is(doc.documentElement.getAttribute("data-theme"), "dark");
+  t.is(doc.documentElement.getAttribute("lang"), "fr");
+});
+
+test.serial("Three-way: without the served HTML, page script changes are reset", async (t) => {
+  let doc = load(`<!doctype html><html lang="en"><body></body></html>`);
+  doc.documentElement.setAttribute("data-theme", "dark");
+  await morph(`<!doctype html><html lang="fr"><body></body></html>`);
+
+  t.false(doc.documentElement.hasAttribute("data-theme"));
+});
+
+test.serial("Three-way: keeps an attribute a page script changed unless the source changed it too", async (t) => {
+  let html = (media) => `<!doctype html><head><link rel="stylesheet" href="/defer.css" media="${media}"></head><body></body>`;
+  let loaded = (doc) => doc.querySelector("link").setAttribute("media", "all");
+
+  let { doc } = await update(html("print"), loaded, `${html("print")}<p>Changed</p>`);
+  t.is(doc.querySelector("link").getAttribute("media"), "all");
+
+  ({ doc } = await update(html("print"), loaded, html("screen")));
+  t.is(doc.querySelector("link").getAttribute("media"), "screen");
+});
+
+test.serial("Three-way: keeps nodes added by page scripts and removes nodes removed from the source", async (t) => {
+  let { doc } = await update(
+    `<!doctype html><body><nav><span class="source">Source</span><p>Removed</p></nav></body>`,
+    (doc) => {
+      let status = doc.createElement("span");
+      status.className = "status";
+      doc.querySelector("nav").append(status);
+    },
+    `<!doctype html><body><nav><span class="source">Source</span></nav></body>`,
+  );
+
+  t.is(doc.querySelector(".status")?.parentNode, doc.querySelector("nav"));
+  t.is(doc.querySelector(".source")?.textContent, "Source");
+  t.is(doc.querySelector("p"), null);
+});
+
+test.serial("Three-way: doesn’t re-add nodes a page script removed", async (t) => {
+  let { doc } = await update(
+    `<!doctype html><body><div class="banner">Dismiss me</div><p>Before</p></body>`,
+    (doc) => doc.querySelector(".banner").remove(),
+    `<!doctype html><body><div class="banner">Dismiss me</div><p>After</p></body>`,
+  );
+
+  t.is(doc.querySelector(".banner"), null);
+  t.is(doc.querySelector("p").textContent, "After");
+});
+
+test.serial("Three-way: keeps text a page script changed unless the source changed it too", async (t) => {
+  let html = (time, label) => `<!doctype html><body><time>${time}</time><p>${label}</p></body>`;
+  let { doc } = await update(
+    html("2026-10-29", "Before"),
+    (doc) => doc.querySelector("time").textContent = "2 days ago",
+    html("2026-10-29", "After"),
+  );
+
+  t.is(doc.querySelector("time").textContent, "2 days ago");
+  t.is(doc.querySelector("p").textContent, "After");
+
+  ({ doc } = await update(
+    html("2026-10-29", "Before"),
+    (doc) => doc.querySelector("time").textContent = "2 days ago",
+    html("2026-10-30", "Before"),
+  ));
+  t.is(doc.querySelector("time").textContent, "2026-10-30");
+});
+
+test.serial("Three-way: keeps form state a user changed", async (t) => {
+  let { doc } = await update(
+    `<!doctype html><body><input type="checkbox"><p>Before</p></body>`,
+    (doc) => doc.querySelector("input").checked = true,
+    `<!doctype html><body><input type="checkbox"><p>After</p></body>`,
+  );
+
+  t.true(doc.querySelector("input").checked);
+  t.is(doc.querySelector("p").textContent, "After");
+});
+
+// Behaves like a Web Awesome (Lit) component: renders its own shadow root and reflects properties to attributes.
+function defineComponent(window) {
+  window.customElements.define("wa-like", class extends window.HTMLElement {
+    static observedAttributes = ["variant"];
+    constructor() {
+      super();
+      this.attachShadow({ mode: "open", delegatesFocus: true }).innerHTML = `<button part="base"><slot></slot></button>`;
+    }
+    connectedCallback() {
+      if(!this.hasAttribute("variant")) {
+        this.setAttribute("variant", "neutral");
+      }
+    }
+    attributeChangedCallback(name, oldValue, value) {
+      this.shadowRoot.querySelector("button").className = value;
+    }
+  });
+}
+
+test.serial("Three-way: works with script-rendered components like Web Awesome", async (t) => {
+  let html = (variant, label) => `<!doctype html><body><wa-like${variant ? ` variant="${variant}"` : ""}>${label}</wa-like><wa-like id="other">Other</wa-like></body>`;
+  let host, button;
+  let { doc } = await update(html("", "Before"), (doc) => {
+    defineComponent(doc.defaultView);
+    host = doc.querySelector("wa-like");
+    button = host.shadowRoot.querySelector("button");
+    host.setAttribute("open", ""); // Reflected from user interaction
+  }, html("", "After"));
+
+  t.is(doc.querySelector("wa-like"), host);
+  t.is(host.shadowRoot.querySelector("button"), button, "Shadow root rendered by the component is left alone");
+  t.is(host.getAttribute("variant"), "neutral");
+  t.true(host.hasAttribute("open"));
+  t.is(host.textContent, "After");
+
+  ({ doc } = await update(html("", "Before"), (doc) => {
+    defineComponent(doc.defaultView);
+    host = doc.querySelector("wa-like");
+  }, `${html("brand", "Before")}<wa-like class="added">Added</wa-like>`));
+
+  t.is(host.getAttribute("variant"), "brand");
+  t.is(host.shadowRoot.querySelector("button").className, "brand");
+  let added = doc.querySelector(".added");
+  t.is(added.getAttribute("variant"), "neutral", "New components upgrade");
+  t.truthy(added.shadowRoot?.querySelector("slot"));
 });

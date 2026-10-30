@@ -119,6 +119,41 @@ export function getReloadForPage(obj, page) {
   });
 }
 
+// The HTML each page was last served or sent, so the client can tell source changes from changes made by page scripts.
+export class PageBaselines {
+  #pages = new Map();
+
+  /**
+   * @param {string} url
+   * @param {string} content
+   */
+  set(url, content) {
+    this.#pages.set(normalizePath(url), content);
+  }
+
+  // Adds `previousContent` to templates with content, then makes their content the new baseline.
+  /** @param {Record<string, any>} obj */
+  apply(obj) {
+    let templates = obj.build?.templates;
+    if(!Array.isArray(templates)) {
+      return obj;
+    }
+    return Object.assign({}, obj, {
+      build: Object.assign({}, obj.build, {
+        templates: templates.map(template => {
+          if(typeof template.url !== "string" || typeof template.content !== "string") {
+            return template;
+          }
+          let key = normalizePath(template.url);
+          let previousContent = this.#pages.get(key);
+          this.#pages.set(key, template.content);
+          return previousContent === undefined ? template : Object.assign({}, template, { previousContent });
+        }),
+      }),
+    });
+  }
+}
+
 // Sends a reload to each open socket with only the templates for its page, serializing once per page.
 /**
  * @param {Iterable<any>} clients

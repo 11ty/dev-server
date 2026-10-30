@@ -1,7 +1,9 @@
+import fs from "node:fs";
+import http from "node:http";
 import test from "ava";
 import WebSocket from "ws";
 import DevServer from "../server.js";
-import { parseClientMessage, isHostnameAllowed, isConnectionAllowed, normalizePath, getReloadForPage } from "../server/clientConnection.js";
+import { parseClientMessage, isHostnameAllowed, isConnectionAllowed, normalizePath, getReloadForPage, PageBaselines } from "../server/clientConnection.js";
 import { ReloadClient } from "../client/reload-client.js";
 
 test("parseClientMessage only returns JSON objects", (t) => {
@@ -115,6 +117,35 @@ test("getReloadForPage keeps only this page’s templates", (t) => {
   t.is(obj.build.templates.length, 3);
 });
 
+test("PageBaselines adds the previous content to templates, then remembers the new content", (t) => {
+  let baselines = new PageBaselines();
+  baselines.set("/about/index.html", "Served");
+
+  let reload = (content) => baselines.apply({
+    type: "eleventy.reload",
+    build: {
+      outputs: true,
+      templates: [
+        { url: "/about/", inputPath: "./about.njk", content },
+        { url: "/new/", inputPath: "./new.njk", content: "New" },
+        { url: "/no-content/", inputPath: "./no-content.njk" },
+      ],
+    },
+  });
+
+  let first = reload("About v2").build.templates;
+  t.is(first[0].previousContent, "Served");
+  t.false("previousContent" in first[1]);
+  t.false("previousContent" in first[2]);
+
+  let second = reload("About v3").build.templates;
+  t.is(second[0].previousContent, "About v2");
+  t.is(second[1].previousContent, "New");
+
+  let notReload = { type: "eleventy.msg", message: "Hi" };
+  t.is(baselines.apply(notReload), notReload);
+});
+
 function connect(port, options) {
   return new Promise((resolve) => {
     let ws = new WebSocket(`ws://localhost:${port}`, options);
@@ -200,6 +231,39 @@ for(let serverThread of [true, false]) {
     for(let ws of [home, about, other]) {
       ws.close();
     }
+    await server.close();
+  });
+
+  test(`Reloads include the HTML the page was served, then the last content sent (${mode})`, async (t) => {
+    let server = getServer(serverThread);
+    let port = await server.getPort();
+
+    let served = await new Promise((resolve) => {
+      http.get(`http://localhost:${port}/`, (res) => {
+        let body = "";
+        res.on("data", chunk => body += chunk);
+        res.on("end", () => resolve(body));
+      });
+    });
+    t.true(served.includes("reload-client.js"));
+
+    let home = await connectPage(port, "/");
+    let reload = (content) => {
+      let message = nextMessage(home, "eleventy.reload");
+      server.reload({
+        files: ["./index.njk"],
+        build: { outputs: true, templates: [{ url: "/", inputPath: "./index.njk", content }] },
+      });
+      return message;
+    };
+
+    let [first] = (await reload("Home v2")).build.templates;
+    t.is(first.previousContent, fs.readFileSync("./test/stubs/index.html", "utf8"));
+
+    let [second] = (await reload("Home v3")).build.templates;
+    t.is(second.previousContent, "Home v2");
+
+    home.close();
     await server.close();
   });
 

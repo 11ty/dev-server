@@ -49,13 +49,58 @@ class Util {
     Idiomorph.morph(root, template.content, { ...options, morphStyle: "innerHTML" });
   }
 
-  static getMorphOptions(Idiomorph) {
+  // Pairs the previously served HTML with the new HTML using a throwaway morph, recording what the source looked like before.
+  static getSourceChanges(Idiomorph, previousContent, newRoot) {
+    let previousRoot = new DOMParser().parseFromString(previousContent, "text/html").documentElement;
+    let walker = previousRoot.ownerDocument.createTreeWalker(previousRoot, NodeFilter.SHOW_ALL);
+    let original = new WeakSet();
+    for(let node = /** @type {Node | null} */ (walker.currentNode); node; node = walker.nextNode()) {
+      original.add(node);
+    }
+
+    let before = new Map(); // new node → its previous attributes (or text)
+    let removed = new Map(); // new parent → counts of child node names the source removed
+    let previousToNew = new Map();
+    Idiomorph.morph(previousRoot, newRoot, {
+      head: { style: "morph" },
+      restoreFocus: false,
+      callbacks: {
+        beforeNodeMorphed: (oldNode, newNode) => {
+          // Skip the empty elements Idiomorph creates to hold new content
+          if(original.has(oldNode)) {
+            previousToNew.set(oldNode, newNode);
+            before.set(newNode, oldNode.nodeType === Node.ELEMENT_NODE ? new Map([...oldNode.attributes].map(({ name, value }) => [name, value])) : oldNode.nodeValue);
+          }
+          return true;
+        },
+        beforeNodeRemoved: (oldNode) => {
+          let parent = previousToNew.get(oldNode.parentNode);
+          if(parent && original.has(oldNode)) {
+            let counts = removed.get(parent) || new Map();
+            counts.set(oldNode.nodeName, (counts.get(oldNode.nodeName) || 0) + 1);
+            removed.set(parent, counts);
+          }
+          return true;
+        },
+      },
+    });
+
+    return { before, removed };
+  }
+
+  // With `changes` (from `getSourceChanges`), only source changes are applied, keeping what page scripts changed.
+  static getMorphOptions(Idiomorph, changes) {
+    let liveToNew = new WeakMap();
     let options = {
       // Match `<head>` children in place like `<body>`; the default merge appends new nodes, which reorders stylesheets
       head: { style: "morph" },
       callbacks: {
         beforeNodeAdded: (node) => {
-          return !Util.isShadowRootTemplate(node);
+          if(Util.isShadowRootTemplate(node)) {
+            return false;
+          }
+          // Was in the source before, so a page script removed it
+          return !changes?.before.has(node);
         },
         afterNodeAdded: (node) => {
           if(node.nodeType !== Node.ELEMENT_NODE) {
@@ -81,10 +126,32 @@ class Util {
           if(node?.hasAttribute?.(ReloadClient.PRESERVE_ATTR)) {
             return false;
           }
+
+          let parent = liveToNew.get(node.parentNode);
+          if(changes && changes.before.has(parent)) {
+            // Only remove as many of these as the source did; the rest were added by page scripts
+            let counts = changes.removed.get(parent);
+            let count = counts?.get(node.nodeName) || 0;
+            if(count === 0) {
+              return false;
+            }
+            counts.set(node.nodeName, count - 1);
+          }
+        },
+        beforeAttributeUpdated: (name, element) => {
+          let newElement = liveToNew.get(element);
+          let attributes = changes?.before.get(newElement);
+          if(attributes instanceof Map) {
+            // Unchanged in the source, so keep what a page script set
+            return (attributes.get(name) ?? null) !== newElement.getAttribute(name);
+          }
         },
         beforeNodeMorphed: (fromEl, toEl) => {
+          liveToNew.set(fromEl, toEl);
+
           if(fromEl.nodeType !== Node.ELEMENT_NODE) {
-            return true;
+            let text = changes?.before.get(toEl);
+            return typeof text !== "string" || text !== toEl.nodeValue;
           }
 
           if(fromEl.hasAttribute("inert") || fromEl.hasAttribute(ReloadClient.PRESERVE_ATTR)) {
@@ -476,7 +543,7 @@ export class ReloadClient {
       try {
         const { Idiomorph } = await import(ReloadClient.IDIOMORPH_URL);
 
-        for (let {url, inputPath, content} of domdiffTemplates) {
+        for (let {url, inputPath, content, previousContent} of domdiffTemplates) {
           // Notable limitation: this won’t re-run script elements or JavaScript page lifecycle events (load/DOMContentLoaded)
           morphed = true;
 
@@ -484,7 +551,8 @@ export class ReloadClient {
 
           // Morphing from a parsed `<html>` (not a string) keeps its attributes in sync and allows an omitted `</html>`
           let { documentElement } = new DOMParser().parseFromString(content, "text/html");
-          Idiomorph.morph(document.documentElement, documentElement, Util.getMorphOptions(Idiomorph));
+          let changes = typeof previousContent === "string" ? Util.getSourceChanges(Idiomorph, previousContent, documentElement) : undefined;
+          Idiomorph.morph(document.documentElement, documentElement, Util.getMorphOptions(Idiomorph, changes));
 
           await ReloadClient.restoreFocus(focusState);
           Util.log(`HTML delta applied without page reload.`);
