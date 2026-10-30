@@ -416,10 +416,10 @@ export default class StaticFiles {
     return this.getServerPath(`${this.options.injectedScriptsFolder}/${filename}`);
   }
 
-  // Returns `reload-client.js` or `idiomorph.js` for their URLs (with or without `pathPrefix`), otherwise `undefined`.
+  // Returns `reload-client.js`, `idiomorph.js`, or `events` (the live reload stream) for their URLs (with or without `pathPrefix`), otherwise `undefined`.
   matchInjectedScript(url) {
     let { pathname } = new URL(url, "http://localhost/");
-    for(let filename of ["reload-client.js", "idiomorph.js"]) {
+    for(let filename of ["reload-client.js", "idiomorph.js", "events"]) {
       // Unprefixed paths still work for pages cached with the old script URL
       if(pathname === this.getInjectedScriptPath(filename) || pathname === `/${this.options.injectedScriptsFolder}/${filename}`) {
         return filename;
@@ -436,15 +436,8 @@ export default class StaticFiles {
       integrityHash = this.sri(scriptContents);
     }
 
-    let searchParams = new URLSearchParams();
-    if(this.options.reloadPort) {
-      searchParams.set("reloadPort", this.options.reloadPort);
-    }
-
-    let searchParamsStr = searchParams.size > 0 ? `?${searchParams.toString()}` : "";
-
     // This isn't super necessary because it's a local file, but it's included anyway
-    let script = `<script type="module" integrity="${integrityHash}" src="${this.getInjectedScriptPath("reload-client.js")}${searchParamsStr}"></script>`;
+    let script = `<script type="module" integrity="${integrityHash}" src="${this.getInjectedScriptPath("reload-client.js")}"></script>`;
 
     if (content.includes("</head>")) {
       return content.replace("</head>", `${script}</head>`);

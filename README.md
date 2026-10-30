@@ -102,7 +102,7 @@ Dotfiles like `.htaccess` are not served, like most production servers, except u
 
 ## Reverse proxies
 
-Behind a reverse proxy that serves the site under a path, set `pathPrefix` to that path: the injected scripts and the live reload connection use it too. The proxy needs to forward WebSocket upgrades, and either keep the `Host` header or have its hostname in `allowedHosts`.
+Behind a reverse proxy that serves the site under a path, set `pathPrefix` to that path: the injected scripts and the live reload connection use it too. Live reload is a long-lived `text/event-stream` response, so the proxy must not buffer it, and must either keep the `Host` header or have its hostname in `allowedHosts`.
 
 ## Allowed hosts
 

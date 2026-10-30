@@ -5,11 +5,10 @@ import { createSecureServer } from "node:http2";
 import { parentPort as maybeParentPort, workerData } from "node:worker_threads";
 
 import mime from "mime";
-import WebSocket, { WebSocketServer } from "ws";
 
 import StaticFiles from "./staticFiles.js";
 import { isPortInUse, portInUseError } from "./portCheck.js";
-import { parseClientMessage, isConnectionAllowed, registerConnection, getConnection, sendReloadByPage, PageBaselines } from "./clientConnection.js";
+import { ReloadChannel, PageBaselines } from "./clientConnection.js";
 import wrapResponse from "./wrapResponse.js";
 
 // Built into Node 24+, and kept out of the generated types
@@ -20,10 +19,8 @@ if(!globalThis.URLPattern) {
 // Always set, since this file only runs as a worker
 const parentPort = /** @type {import("node:worker_threads").MessagePort} */ (maybeParentPort);
 
-const POLITE_WEBSOCKET_CLOSE_TIMEOUT = 50; // in ms
-
 /**
- * Runs the HTTP + WebSocket servers on a dedicated thread so that request
+ * Runs the HTTP server and live reload streams on a dedicated thread so that request
  * handling is never blocked by build work on the main thread.
  *
  * Requests are answered entirely here whenever possible. Requests that need
@@ -32,7 +29,7 @@ const POLITE_WEBSOCKET_CLOSE_TIMEOUT = 50; // in ms
  */
 class ServerThread {
   #server;
-  #updateServer;
+  #reloadChannel;
   #staticFiles;
   #options;
   #onRequestPatterns = [];
@@ -199,6 +196,9 @@ class ServerThread {
   }
 
   async #handleRequest(req, res) {
+    if(this.#reloadChannel && this.#staticFiles.matchInjectedScript(req.url) === "events") {
+      return this.#reloadChannel.handle(req, res);
+    }
 
     if(this.#serveInjectedScript(req, res)) {
       return;
@@ -311,87 +311,13 @@ class ServerThread {
   }
 
   #setupReloadNotifier() {
-    let options = {};
-    if(this.#options.reloadPort) {
-      options.port = this.#options.reloadPort;
-      options.host = this.host;
-    } else {
-      // includes the port
-      options.server = this.#server;
-    }
-
-    let blocked = new Set();
-    options.verifyClient = ({ origin, req }) => {
-      let host = req.headers.host;
-      if(isConnectionAllowed({ origin, host }, this.#options.allowedHosts)) {
-        return true;
-      }
-      let key = `${origin} ${host}`;
-      if(!blocked.has(key)) {
-        blocked.add(key);
-        this.#log("error", [`Blocked a live reload connection from origin ${origin} to host ${host}. Add the hostname to the \`allowedHosts\` server option if this was you.`]);
-      }
-      return false;
-    };
-
-    let updateServer = new WebSocketServer(options);
-    updateServer.on("connection", (ws, req) => {
-      let { clientId } = registerConnection(ws, req);
-
-      // Update the count before the client hears it's connected
-      parentPort.postMessage({ type: "clientCount", size: updateServer.clients.size });
-
-      this.broadcast({
-        type: "eleventy.status",
-        status: "connected",
-        buildId: this.#buildId,
-      }, ws);
-
-      ws.on("close", () => {
-        parentPort.postMessage({ type: "clientCount", size: updateServer.clients.size });
-      });
-
-      ws.on("message", (data) => {
-        // A malformed message must not take down the thread
-        let parsed = parseClientMessage(data);
-        if(!parsed) {
-          return;
-        }
-        if(parsed.id) {
-          // send acknowledgement
-          this.broadcast({
-            type: "eleventy.ack",
-            id: parsed.id,
-          }, ws);
-        }
-
-        parentPort.postMessage({ type: "clientMessage", parsed: Object.assign({}, parsed, { clientId }) });
-      });
+    this.#reloadChannel = new ReloadChannel({
+      allowedHosts: this.#options.allowedHosts,
+      getBuildId: () => this.#buildId,
+      logError: (message) => this.#log("error", [message]),
+      onClientCount: (size) => parentPort.postMessage({ type: "clientCount", size }),
+      onClientMessage: (parsed) => parentPort.postMessage({ type: "clientMessage", parsed }),
     });
-
-    updateServer.on("error", (err) => {
-      parentPort.postMessage({ type: "serverError", code: err.code, port: err.port, message: err.message });
-    });
-
-    this.#updateServer = updateServer;
-  }
-
-  broadcast(obj, include) {
-    this.#broadcastJson(JSON.stringify(obj), include);
-  }
-
-  #broadcastJson(json, include, clientId) {
-    if(!this.#updateServer?.clients) {
-      return;
-    }
-    for(let client of this.#updateServer.clients) {
-      if(clientId && getConnection(client)?.clientId !== clientId) {
-        continue;
-      }
-      if((!include || include === client) && client.readyState === WebSocket.OPEN) {
-        client.send(json);
-      }
-    }
   }
 
   #closeOne(server) {
@@ -406,17 +332,10 @@ class ServerThread {
   async close() {
     this.#closing = true;
 
+    // Open streams would keep the server from closing
+    this.#reloadChannel?.close();
+
     let promises = [];
-    if(this.#updateServer) {
-      this.#updateServer.clients.forEach(socket => {
-        socket.close();
-        if("terminate" in socket) {
-          // More aggressive close, `close()` waits for a response from the client and terminate does not.
-          setTimeout(() => socket.terminate(), POLITE_WEBSOCKET_CLOSE_TIMEOUT);
-        }
-      });
-      promises.push(this.#closeOne(this.#updateServer));
-    }
 
     if(this.#server?.listening) {
       promises.push(this.#closeOne(this.#server));
@@ -449,11 +368,11 @@ class ServerThread {
         this.#buildId = msg.buildId;
       }
       if(msg.byPage) {
-        sendReloadByPage(this.#updateServer?.clients || [], this.#baselines.apply(JSON.parse(msg.json)), WebSocket.OPEN);
+        this.#reloadChannel?.sendByPage(this.#baselines.apply(JSON.parse(msg.json)));
       } else if(msg.hasTemplates) {
-        this.#broadcastJson(JSON.stringify(this.#baselines.apply(JSON.parse(msg.json))), undefined, msg.clientId);
+        this.#reloadChannel?.send(JSON.stringify(this.#baselines.apply(JSON.parse(msg.json))), { clientId: msg.clientId, id: msg.buildId });
       } else {
-        this.#broadcastJson(msg.json, undefined, msg.clientId);
+        this.#reloadChannel?.send(msg.json, { clientId: msg.clientId, id: msg.buildId });
       }
     } else if(msg.type === "passthroughCopies") {
       this.#staticFiles.setPassthroughCopies(msg.entries);
