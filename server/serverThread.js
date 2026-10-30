@@ -8,7 +8,7 @@ import mime from "mime";
 
 import StaticFiles from "./staticFiles.js";
 import { isPortInUse, portInUseError } from "./portCheck.js";
-import { ReloadChannel } from "./clientConnection.js";
+import { ReloadChannel, PageBaselines } from "./clientConnection.js";
 import wrapResponse from "./wrapResponse.js";
 
 // Built into Node 24+, and kept out of the generated types
@@ -38,6 +38,7 @@ class ServerThread {
   #portRetryCount = 0;
   #closing = false;
   #buildId;
+  #baselines = new PageBaselines();
 
   constructor({ dir, options, onRequestPatterns, hasMiddleware, passthroughCopies, port, host, buildId }) {
     this.#options = options;
@@ -129,6 +130,10 @@ class ServerThread {
       let isXHR = req.headers["sec-fetch-mode"] && req.headers["sec-fetch-mode"] != "navigate";
 
       if(this.#options.liveReload !== false && !isXHR) {
+        if(this.#options.domDiff && res.statusCode === 200) {
+          this.#baselines.set(new URL(req.url, "http://localhost/").pathname, content);
+        }
+
         let scriptContents = this.#staticFiles.getReloadClientContents();
         let integrityHash = this.#staticFiles.sri(scriptContents);
 
@@ -162,10 +167,10 @@ class ServerThread {
         res.end(this.#staticFiles.getReloadClientContents());
         return true;
       }
-    } else if(injectedScript === "morphdom.js") {
+    } else if(injectedScript === "idiomorph.js") {
       if(domDiff) {
         res.setHeader("Content-Type", mime.getType("js"));
-        res.end(this.#staticFiles.readFile(this.#staticFiles.getMorphdomPath()));
+        res.end(this.#staticFiles.readFile(this.#staticFiles.getIdiomorphPath()));
         return true;
       }
     }
@@ -363,7 +368,9 @@ class ServerThread {
         this.#buildId = msg.buildId;
       }
       if(msg.byPage) {
-        this.#reloadChannel?.sendByPage(JSON.parse(msg.json));
+        this.#reloadChannel?.sendByPage(this.#baselines.apply(JSON.parse(msg.json)));
+      } else if(msg.hasTemplates) {
+        this.#reloadChannel?.send(JSON.stringify(this.#baselines.apply(JSON.parse(msg.json))), { clientId: msg.clientId, id: msg.buildId });
       } else {
         this.#reloadChannel?.send(msg.json, { clientId: msg.clientId, id: msg.buildId });
       }
