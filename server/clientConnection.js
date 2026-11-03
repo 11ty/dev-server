@@ -1,19 +1,4 @@
 import { isIP } from "node:net";
-import { randomUUID } from "node:crypto";
-
-// Returns the parsed message, or `undefined` for anything that isn't a JSON object.
-export function parseClientMessage(data) {
-  let parsed;
-  try {
-    parsed = JSON.parse(data.toString());
-  } catch(e) {
-    return;
-  }
-
-  if(parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-    return parsed;
-  }
-}
 
 function getHostname(value) {
   try {
@@ -79,10 +64,10 @@ export function normalizePath(path = "") {
   return pathname;
 }
 
-/** @type {WeakMap<object, { clientId: string, page: string | undefined }>} */
+/** @type {WeakMap<object, { page: string | undefined }>} */
 const connections = new WeakMap();
 
-// Gives a new client an id and the normalized page from its `?page=` param.
+// Stores the normalized page from a new client's `?page=` param.
 /**
  * @param {object} client
  * @param {{ url?: string }} req
@@ -90,7 +75,6 @@ const connections = new WeakMap();
 export function registerConnection(client, req) {
   let page = new URL(req.url || "/", "http://localhost/").searchParams.get("page");
   let connection = {
-    clientId: randomUUID(),
     page: page ? normalizePath(page) : undefined,
   };
   connections.set(client, connection);
@@ -170,7 +154,6 @@ export function sendReloadByPage(clients, obj) {
   }
 }
 
-const MAX_MESSAGE_BYTES = 1024 * 1024;
 // A tab with this much unsent data has stopped reading; it reconnects once it recovers.
 const MAX_BUFFERED_BYTES = 2 * 1024 * 1024;
 
@@ -205,24 +188,8 @@ export class EventStreamClient {
   }
 }
 
-/** @returns {Promise<Buffer | undefined>} `undefined` when larger than `limit`. */
-function readBody(req, limit) {
-  return new Promise((resolve, reject) => {
-    let chunks = [];
-    let size = 0;
-    req.on("data", (chunk) => {
-      size += chunk.length;
-      if(size <= limit) {
-        chunks.push(chunk);
-      }
-    });
-    req.on("end", () => resolve(size <= limit ? Buffer.concat(chunks) : undefined));
-    req.on("error", reject);
-  });
-}
-
 /**
- * Live reload over Server-Sent Events: a `GET` opens a tab’s stream and a `POST` carries a message from a tab.
+ * One-way live reload over Server-Sent Events: a `GET` opens a tab’s stream.
  */
 export class ReloadChannel {
   /** @type {Set<EventStreamClient>} */
@@ -234,7 +201,6 @@ export class ReloadChannel {
    * @param {{
    *   allowedHosts?: string[] | true,
    *   getBuildId: () => string,
-   *   onClientMessage: (message: Record<string, any>) => void,
    *   onClientCount?: (size: number) => void,
    *   logError: (message: string) => void,
    * }} options
@@ -258,17 +224,9 @@ export class ReloadChannel {
     return false;
   }
 
-  #end(res, statusCode, json) {
-    res.writeHead(statusCode, json ? { "Content-Type": "application/json" } : {});
-    res.end(json);
-  }
-
-  #findClient(clientId) {
-    for(let client of this.clients) {
-      if(getConnection(client)?.clientId === clientId) {
-        return client;
-      }
-    }
+  #end(res, statusCode) {
+    res.writeHead(statusCode);
+    res.end();
   }
 
   handle(req, res) {
@@ -278,16 +236,13 @@ export class ReloadChannel {
     if(req.method === "GET") {
       return this.#open(req, res);
     }
-    if(req.method === "POST") {
-      return this.#receive(req, res);
-    }
-    res.setHeader("Allow", "GET, POST");
+    res.setHeader("Allow", "GET");
     this.#end(res, 405);
   }
 
   #open(req, res) {
     let client = new EventStreamClient(res);
-    let { clientId } = registerConnection(client, req);
+    registerConnection(client, req);
     this.clients.add(client);
     res.on("close", () => {
       this.clients.delete(client);
@@ -309,44 +264,16 @@ export class ReloadChannel {
       type: "eleventy.status",
       status: "connected",
       buildId,
-      clientId,
     }), buildId);
-  }
-
-  // JSON only, which cross-site pages can't send without a CORS preflight that is never answered.
-  async #receive(req, res) {
-    if(!(req.headers["content-type"] || "").startsWith("application/json")) {
-      return this.#end(res, 415);
-    }
-
-    let clientId = new URL(req.url, "http://localhost/").searchParams.get("clientId");
-    if(!this.#findClient(clientId)) {
-      return this.#end(res, 404);
-    }
-
-    let body = await readBody(req, MAX_MESSAGE_BYTES);
-    if(!body) {
-      return this.#end(res, 413);
-    }
-
-    let parsed = parseClientMessage(body);
-    if(!parsed) {
-      return this.#end(res, 400);
-    }
-
-    this.#end(res, 200, JSON.stringify({ type: "eleventy.ack", id: parsed.id }));
-    this.#options.onClientMessage(Object.assign({}, parsed, { clientId }));
   }
 
   /**
    * @param {string} json
-   * @param {{ clientId?: string, id?: string }} [options]
+   * @param {string} [id]
    */
-  send(json, { clientId, id } = {}) {
+  send(json, id) {
     for(let client of this.clients) {
-      if(!clientId || getConnection(client)?.clientId === clientId) {
-        client.send(json, id);
-      }
+      client.send(json, id);
     }
   }
 

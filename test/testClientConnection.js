@@ -2,18 +2,9 @@ import fs from "node:fs";
 import test from "ava";
 import http from "node:http";
 import DevServer from "../server.js";
-import { parseClientMessage, isHostnameAllowed, isConnectionAllowed, normalizePath, getReloadForPage, EventStreamClient, PageBaselines } from "../server/clientConnection.js";
+import { isHostnameAllowed, isConnectionAllowed, normalizePath, getReloadForPage, EventStreamClient, PageBaselines } from "../server/clientConnection.js";
 import { ReloadClient } from "../client/reload-client.js";
 import { openEventStream } from "./helpers/eventStream.js";
-
-test("parseClientMessage only returns JSON objects", (t) => {
-  t.deepEqual(parseClientMessage(Buffer.from(`{"id":1}`)), { id: 1 });
-  t.is(parseClientMessage(Buffer.from("NOT-VALID-JSON{{{")), undefined);
-  t.is(parseClientMessage(Buffer.from("null")), undefined);
-  t.is(parseClientMessage(Buffer.from("1")), undefined);
-  t.is(parseClientMessage(Buffer.from(`"string"`)), undefined);
-  t.is(parseClientMessage(Buffer.from("[]")), undefined);
-});
 
 test("isHostnameAllowed", (t) => {
   t.true(isHostnameAllowed("localhost"));
@@ -87,15 +78,6 @@ function request(port, { method = "GET", path = "/.ba/events", headers = {}, bod
     });
     req.on("error", reject);
     req.end(body);
-  });
-}
-
-function post(port, clientId, body, headers = {}) {
-  return request(port, {
-    method: "POST",
-    path: `/.ba/events?clientId=${clientId}`,
-    headers: { "Content-Type": "application/json", Origin: `http://localhost:${port}`, ...headers },
-    body,
   });
 }
 
@@ -202,31 +184,15 @@ for(let serverThread of [true, false]) {
     await server.close();
   });
 
-  test(`Live reload rejects messages that aren't JSON objects from this site (${mode})`, async (t) => {
-    let received = [];
-    let server = getServer(serverThread, { onClientMessage: (message) => received.push(message) });
+  test(`Live reload only accepts GET (${mode})`, async (t) => {
+    let server = getServer(serverThread);
     let port = await server.getPort();
 
-    let stream = await connectPage(port, "/");
-    let { clientId } = stream.status;
-
-    for(let body of ["NOT-VALID-JSON{{{", "null", "1", "[]"]) {
-      t.is((await post(port, clientId, body)).statusCode, 400);
+    for(let method of ["POST", "PUT"]) {
+      let res = await request(port, { method, headers: { "Content-Type": "application/json", Origin: `http://localhost:${port}` }, body: "{}" });
+      t.is(res.statusCode, 405);
     }
-    t.is((await post(port, clientId, "{}", { "Content-Type": "text/plain" })).statusCode, 415);
-    t.is((await post(port, clientId, "{}", { Origin: "https://evil.example" })).statusCode, 403);
-    t.is((await post(port, "missing", "{}")).statusCode, 404);
-    t.is((await post(port, clientId, `{"id":"${"x".repeat(2 * 1024 * 1024)}"}`)).statusCode, 413);
-    t.is((await request(port, { method: "PUT" })).statusCode, 405);
 
-    let ack = await post(port, clientId, JSON.stringify({ id: "after" }));
-    t.is(ack.statusCode, 200);
-    t.deepEqual(JSON.parse(ack.body), { type: "eleventy.ack", id: "after" });
-
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    t.deepEqual(received.map(({ id }) => id), ["after"]);
-
-    stream.close();
     await server.close();
   });
 
@@ -319,36 +285,6 @@ for(let serverThread of [true, false]) {
 
     home.close();
     about.close();
-    await server.close();
-  });
-
-  test(`Client messages carry a clientId for targeted replies (${mode})`, async (t) => {
-    let received;
-    let clientMessage = new Promise((resolve) => { received = resolve; });
-    let server = getServer(serverThread, { onClientMessage: (message) => received(message) });
-    let port = await server.getPort();
-
-    let sender = await connectPage(port, "/");
-    let bystander = await connectPage(port, "/");
-    t.not(sender.status.clientId, bystander.status.clientId);
-
-    let ack = await post(port, sender.status.clientId, JSON.stringify({ id: "m1", type: "hello", data: {}, timestamp: Date.now() }));
-    t.is(JSON.parse(ack.body).id, "m1");
-
-    let message = await clientMessage;
-    t.is(message.type, "hello");
-    t.is(message.clientId, sender.status.clientId);
-
-    let senderReply = sender.next("eleventy.msg");
-    let bystanderMessage = bystander.next("eleventy.msg");
-    server.sendUpdateNotification({ type: "eleventy.msg", message: "reply" }, { clientId: message.clientId });
-    server.sendUpdateNotification({ type: "eleventy.msg", message: "everyone" });
-
-    t.is((await senderReply).message, "reply");
-    t.is((await bystanderMessage).message, "everyone");
-
-    sender.close();
-    bystander.close();
     await server.close();
   });
 

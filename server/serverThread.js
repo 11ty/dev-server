@@ -316,7 +316,6 @@ class ServerThread {
       getBuildId: () => this.#buildId,
       logError: (message) => this.#log("error", [message]),
       onClientCount: (size) => parentPort.postMessage({ type: "clientCount", size }),
-      onClientMessage: (parsed) => parentPort.postMessage({ type: "clientMessage", parsed }),
     });
   }
 
@@ -370,9 +369,9 @@ class ServerThread {
       if(msg.byPage) {
         this.#reloadChannel?.sendByPage(this.#baselines.apply(JSON.parse(msg.json)));
       } else if(msg.hasTemplates) {
-        this.#reloadChannel?.send(JSON.stringify(this.#baselines.apply(JSON.parse(msg.json))), { clientId: msg.clientId, id: msg.buildId });
+        this.#reloadChannel?.send(JSON.stringify(this.#baselines.apply(JSON.parse(msg.json))), msg.buildId);
       } else {
-        this.#reloadChannel?.send(msg.json, { clientId: msg.clientId, id: msg.buildId });
+        this.#reloadChannel?.send(msg.json, msg.buildId);
       }
     } else if(msg.type === "passthroughCopies") {
       this.#staticFiles.setPassthroughCopies(msg.entries);

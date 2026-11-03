@@ -262,8 +262,6 @@ class Util {
 
 export class ReloadClient {
   #source;
-  #clientId; // identifies this tab to the server for `sendToServer`
-  #ack = [];
   #ready = false; // swap to Promise.withResolvers
   #buildId; // specific to one single core build run
   #hasConnected = false;
@@ -662,16 +660,10 @@ export class ReloadClient {
           this.#hasConnected = true;
           this.#wasDropped = false;
           this.#buildId = data.buildId;
-          this.#clientId = data.clientId;
           this.#ready = true;
           this.reconnectInterval = ReloadClient.RECONNECT_INTERVAL;
         } else {
           Util.log(Util.capitalize(data.status));
-        }
-      } else if(type === "edit") {
-        // Forward server replies only (not requests echoed from other windows)
-        if("ok" in data && !data.edits) {
-          document.dispatchEvent(new CustomEvent("buildawesome:edit", { detail: data }));
         }
       } else {
         Util.log("Unknown event type", data);
@@ -703,46 +695,6 @@ export class ReloadClient {
 
     // In-place updates skip page reloads, so let page scripts know a rebuild was applied (`changed` is false when this page was untouched)
     document.dispatchEvent(new CustomEvent("buildawesome:reload", { detail: { buildId, changed } }));
-  }
-
-  sendToServer(type, data) {
-    if(!this.#ready) {
-      throw new Error("Server is not yet ready.");
-    }
-
-    const id = crypto.randomUUID();
-
-    let url = new URL("events", import.meta.url);
-    url.searchParams.set("clientId", this.#clientId);
-
-    fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        id,
-        type,
-        data,
-        timestamp: Date.now(),
-      }),
-    }).then(res => {
-      if(!res.ok) {
-        throw new Error(`${res.status} ${res.statusText}`);
-      }
-      return res.json();
-    }).then(ack => {
-      // acknowledge that a message has been received for removal on client
-      for(let ackFn of this.#ack) {
-        ackFn(ack.id);
-      }
-    }).catch(e => {
-      Util.error(`Error sending ${type} to the server: ${e.message}`, e);
-    });
-
-    return { id };
-  }
-
-  onAcknowledge(callback) {
-    this.#ack.push(callback);
   }
 }
 

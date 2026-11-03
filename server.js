@@ -37,7 +37,6 @@ const debug = createDebug("Eleventy:DevServer");
  * @typedef {string | Response | { status?: number, headers?: Record<string, string> | Headers, body?: string } | undefined | null | false} OnRequestResult
  * @typedef {(context: { url: URL, pattern: URLPattern, patternGroups: Record<string, string | undefined> }) => OnRequestResult | Promise<OnRequestResult>} OnRequestHandler
  * @typedef {{ info(...args: unknown[]): void, log(...args: unknown[]): void, error(...args: unknown[]): void }} Logger
- * @typedef {{ id: string, type: string, data: unknown, timestamp: number, clientId: string }} ClientMessage `clientId` identifies the sending tab for `sendUpdateNotification`.
  * @typedef {{ hosts: string[], localhostUrl: string, startupTime: number, version: string, options: Record<string, any> }} StartMessageData
  * @typedef {{ url: string, inputPath: string, outputPath?: string, content?: string }} BuildTemplate
  * @typedef {{
@@ -132,12 +131,6 @@ const DEFAULT_OPTIONS = {
     log: console.log,
     error: console.error,
   }),
-  /**
-   * Called for messages sent with the client’s `sendToServer()`.
-   * @param {ClientMessage} message
-   * @returns {void}
-   */
-  onClientMessage: function(message) {},
 };
 
 /**
@@ -699,10 +692,6 @@ export default class DevServer {
       this.#handleProxyRequest(msg);
     } else if(msg.type === "proxyAbort") {
       this.#proxyResponses.get(msg.id)?.proxyAbort();
-    } else if(msg.type === "clientMessage") {
-      if(typeof this.options.onClientMessage === "function") {
-        this.options.onClientMessage(msg.parsed);
-      }
     } else if(msg.type === "clientCount") {
       this.#threadClientCount = msg.size;
     } else if(msg.type === "log") {
@@ -1050,11 +1039,6 @@ export default class DevServer {
       allowedHosts: this.options.allowedHosts,
       getBuildId: () => this.buildId,
       logError: (message) => this.logger.error(message),
-      onClientMessage: (message) => {
-        if(typeof this.options.onClientMessage === "function") {
-          this.options.onClientMessage(/** @type {ClientMessage} */ (message));
-        }
-      },
     });
   }
 
@@ -1068,18 +1052,18 @@ export default class DevServer {
   }
 
   /**
-   * Sends a message to every open page, or only to the one with `clientId` (from `onClientMessage`).
+   * Sends a message to every open page.
    * @param {Record<string, unknown>} obj
-   * @param {{ clientId?: string, byPage?: boolean }} [options] `byPage` is internal.
+   * @param {{ byPage?: boolean }} [options] `byPage` is internal.
    */
   sendUpdateNotification(obj, options = {}) {
-    let { clientId, byPage } = options;
+    let { byPage } = options;
     let buildId = typeof obj.buildId === "string" ? obj.buildId : undefined;
     if(this.isThreaded) {
       // Serialized here: structured clone throws on values JSON drops (e.g. functions in template `data`)
       let templates = /** @type {any} */ (obj.build)?.templates;
       let hasTemplates = Array.isArray(templates) && templates.length > 0;
-      this.#worker?.postMessage({ type: "broadcast", json: JSON.stringify(obj), buildId, clientId, byPage, hasTemplates });
+      this.#worker?.postMessage({ type: "broadcast", json: JSON.stringify(obj), buildId, byPage, hasTemplates });
       return;
     }
 
@@ -1094,7 +1078,7 @@ export default class DevServer {
       return;
     }
 
-    this.#reloadChannel.send(JSON.stringify(obj), { clientId, id: buildId });
+    this.#reloadChannel.send(JSON.stringify(obj), buildId);
   }
 
   // Helper for promisifying close methods with callbacks, like http.Server.

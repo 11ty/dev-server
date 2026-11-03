@@ -118,23 +118,14 @@ Live reload only accepts connections from pages served by the dev server, on `lo
 
 ## Client API
 
-The injected client is available as `window.BuildAwesomeReload` (alias `window.EleventyReload`; `sendToServer(type, data)` returns `{ id }`) and dispatches these events on `document`:
+The injected client is available as `window.BuildAwesomeReload` (alias `window.EleventyReload`) and dispatches these events on `document`:
 
 - `buildawesome:reload` after every rebuild (including in-place updates), with `detail: { buildId, changed }`. `changed` is `false` when the rebuild didn’t touch the current page.
 - `buildawesome:beforereload` before the current page is updated in place (not for CSS-only builds, full reloads, or unchanged pages), with `detail: { buildId, waitUntil(promise) }`. The update waits for promises passed to `waitUntil`, up to 1000ms.
-- `buildawesome:edit` for edit replies from the server, with `detail` set to the full message: `{ type, id, ok: true, results }` or `{ type, id, ok: false, errors }`. Match `id` against the one returned by `sendToServer`.
 
 ```js
 document.addEventListener("buildawesome:reload", (e) => console.log(e.detail.buildId, e.detail.changed));
 document.addEventListener("buildawesome:beforereload", (e) => e.detail.waitUntil(saveState()));
-```
-
-Messages passed to the `onClientMessage` server option include a `clientId` for the sending tab. Pass it to `sendUpdateNotification` to reply to that tab only:
-
-```js
-onClientMessage(message) {
-  server.sendUpdateNotification({ type: "buildawesome.msg", message: "Hi" }, { clientId: message.clientId });
-}
 ```
 
 In-place updates only apply what changed in the HTML since the page was served, so attributes, text, and elements changed by page scripts are kept.

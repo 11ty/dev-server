@@ -17,7 +17,6 @@ let options: DevServerOptions = {
     "/fetch": async () => new Response("ok"),
   },
   messageOnStart: ({ hosts }) => `Server at ${hosts.join(" or ")}`,
-  onClientMessage: ({ type, data }) => console.log(type, data),
 };
 
 let server = DevServer.getServer("example", "_site", options);
