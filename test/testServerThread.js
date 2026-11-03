@@ -2,6 +2,7 @@ import test from "ava";
 import http from "http";
 import { Worker } from "node:worker_threads";
 import DevServer from "../server.js";
+import { openEventStream } from "./helpers/eventStream.js";
 
 // The dev server runs its HTTP server on a worker thread by default so that
 // requests stay fast while a build occupies the main thread. These tests assert
@@ -211,8 +212,8 @@ test("Passthrough copies reach the server thread", async (t) => {
 test("Injected scripts are served off the main thread", async (t) => {
   let { threaded, single } = await inBothModes({}, async (server) => {
     return {
-      client: await request(server, "/.11ty/reload-client.js"),
-      idiomorph: await request(server, "/.11ty/idiomorph.js"),
+      client: await request(server, "/.ba/reload-client.js"),
+      idiomorph: await request(server, "/.ba/idiomorph.js"),
     };
   });
 
@@ -459,31 +460,21 @@ test("Reloads with values that can't be cloned reach clients", async (t) => {
   server.serve(0);
   let port = await server.getPort();
 
-  let socket = new WebSocket(`ws://localhost:${port}/?page=/`);
-  let messages = [];
-  let reloadMessage = new Promise((resolve) => {
-    socket.addEventListener("message", (event) => {
-      let data = JSON.parse(event.data);
-      messages.push(data);
-      if(data.type === "eleventy.status") {
-        server.reload({
-          files: ["./index.njk"],
-          build: {
-            outputs: true,
-            templates: [{ url: "/", inputPath: "./index.njk", content: "Home", data: { fn() {} } }],
-          },
-        });
-      } else if(data.type === "eleventy.reload") {
-        resolve(data);
-      }
-    });
+  let stream = await openEventStream(`http://localhost:${port}/.ba/events?page=/`);
+  await stream.next("eleventy.status");
+  server.reload({
+    files: ["./index.njk"],
+    build: {
+      outputs: true,
+      templates: [{ url: "/", inputPath: "./index.njk", content: "Home", data: { fn() {} } }],
+    },
   });
 
-  let reload = await withTimeout(reloadMessage);
+  let reload = await withTimeout(stream.next("eleventy.reload"));
   t.is(reload.build.templates[0].url, "/");
   t.deepEqual(reload.build.templates[0].data, {});
 
-  socket.close();
+  stream.close();
   await server.close();
 });
 
@@ -727,25 +718,20 @@ test("Wrong-case URLs are a 404 in both modes", async (t) => {
 test("Injected scripts and live reload are served under pathPrefix in both modes", async (t) => {
   let results = await inBothModes({ pathPrefix: "/prefix/" }, async (server) => {
     let page = await request(server, "/prefix/sample");
-    let client = await request(server, "/prefix/.11ty/reload-client.js");
-    let legacyClient = await request(server, "/.11ty/reload-client.js");
-    let idiomorph = await request(server, "/prefix/.11ty/idiomorph.js");
+    let client = await request(server, "/prefix/.ba/reload-client.js");
+    let legacyClient = await request(server, "/.ba/reload-client.js");
+    let idiomorph = await request(server, "/prefix/.ba/idiomorph.js");
 
     let port = await server.getPort();
-    let opened = await new Promise((resolve) => {
-      let socket = new WebSocket(`ws://localhost:${port}/prefix/`);
-      socket.addEventListener("open", () => {
-        socket.close();
-        resolve(true);
-      });
-      socket.addEventListener("error", () => resolve(false));
-    });
+    let stream = await openEventStream(`http://localhost:${port}/prefix/.ba/events`);
+    let opened = (await stream.next())?.status === "connected";
+    stream.close();
 
     return { page, client, legacyClient, idiomorph, opened };
   });
 
   for(let { page, client, legacyClient, idiomorph, opened } of Object.values(results)) {
-    t.true(page.body.includes(`src="/prefix/.11ty/reload-client.js"`));
+    t.true(page.body.includes(`src="/prefix/.ba/reload-client.js"`));
     t.is(client.statusCode, 200);
     t.true(client.body.includes("class ReloadClient"));
     t.is(legacyClient.statusCode, 200);
@@ -759,7 +745,7 @@ test("Error pages load the reload client from a file, not inline, in both modes"
 
   for(let result of Object.values(results)) {
     t.is(result.statusCode, 404);
-    t.true(result.body.includes(`src="/.11ty/reload-client.js"`));
+    t.true(result.body.includes(`src="/.ba/reload-client.js"`));
     t.false(result.body.includes("class ReloadClient"));
   }
 });

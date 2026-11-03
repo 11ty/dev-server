@@ -1,6 +1,7 @@
 import test from "ava";
 import http from "http";
 import DevServer from "../server.js";
+import { openEventStream } from "./helpers/eventStream.js";
 
 function getOptions(options = {}) {
   options.logger = {
@@ -437,41 +438,26 @@ function withResolvers() {
   };
 }
 
-test("Web Socket request", async (t) => {
+test("Live reload event stream", async (t) => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions());
   server.serve(0);
 
   let port = await server.getPort();
   t.true(port > 0);
 
-  let socket = new WebSocket(`ws://localhost:${port}`);
+  let stream = await openEventStream(`http://localhost:${port}/.ba/events`);
 
   try {
-    let promises = [];
-    promises.push(withResolvers());
-    promises.push(withResolvers());
+    t.is(stream.res.headers.get("content-type"), "text/event-stream");
 
-    socket.addEventListener("message", (event) => {
-      promises[0].resolve(event);
-    }, {
-      once: true
-    });
-    let e1 = await promises[0].promise;
-    let e1Data = JSON.parse(e1.data);
+    let e1Data = await stream.next();
 
-    socket.addEventListener("message", (event) => {
-      promises[1].resolve(event);
-    }, {
-      once: true
-    });
-
+    let e2Promise = stream.next();
     server.sendUpdateNotification({
       type: "eleventy.msg",
       data: "TESTING"
     });
-
-    let e2 = await promises[1].promise;
-    let e2Data = JSON.parse(e2.data);
+    let e2Data = await e2Promise;
 
     // The server thread reports its client count asynchronously
     let deadline = Date.now() + 2000;
@@ -489,30 +475,25 @@ test("Web Socket request", async (t) => {
     t.is(e2Data.type, "eleventy.msg");
     t.is(e2Data.data, "TESTING");
   } finally {
-    socket.close();
+    stream.close();
     await server.close();
   }
 });
 
-test("Web Socket buildId, sent on connect and bumped by each reload", async (t) => {
+test("Live reload buildId, sent on connect and bumped by each reload", async (t) => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions());
   server.serve(0);
 
   let port = await server.getPort();
 
-  let socket = new WebSocket(`ws://localhost:${port}`);
-  let nextMessage = () => {
-    let { promise, resolve } = withResolvers();
-    socket.addEventListener("message", (event) => resolve(JSON.parse(event.data)), { once: true });
-    return promise;
-  };
+  let stream = await openEventStream(`http://localhost:${port}/.ba/events`);
 
-  let connected = await nextMessage();
+  let connected = await stream.next();
   t.is(connected.status, "connected");
   // a client reconnecting with this id missed nothing
   t.is(connected.buildId, server.buildId);
 
-  let reloadedPromise = nextMessage();
+  let reloadedPromise = stream.next();
   server.reload({ subtype: "css", files: [] });
   let reloaded = await reloadedPromise;
 
@@ -521,16 +502,16 @@ test("Web Socket buildId, sent on connect and bumped by each reload", async (t) 
   t.not(reloaded.buildId, connected.buildId);
 
   // a client connecting after the reload sees the new id
-  let socket2 = new WebSocket(`ws://localhost:${port}`);
-  let { promise: reconnectedPromise, resolve } = withResolvers();
-  socket2.addEventListener("message", (event) => resolve(JSON.parse(event.data)), { once: true });
-  let reconnected = await reconnectedPromise;
+  let stream2 = await openEventStream(`http://localhost:${port}/.ba/events`);
+  let reconnected = await stream2.next();
   t.is(reconnected.buildId, reloaded.buildId);
 
+  stream.close();
+  stream2.close();
   await server.close();
 });
 
-test("Web Socket buildId is unique per server instance", async (t) => {
+test("Live reload buildId is unique per server instance", async (t) => {
   let first = new DevServer("test-server", "./test/stubs/", getOptions());
   let second = new DevServer("test-server", "./test/stubs/", getOptions());
 

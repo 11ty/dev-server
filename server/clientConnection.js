@@ -1,19 +1,4 @@
 import { isIP } from "node:net";
-import { randomUUID } from "node:crypto";
-
-// Returns the parsed message, or `undefined` for anything that isn't a JSON object.
-export function parseClientMessage(data) {
-  let parsed;
-  try {
-    parsed = JSON.parse(data.toString());
-  } catch(e) {
-    return;
-  }
-
-  if(parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-    return parsed;
-  }
-}
 
 function getHostname(value) {
   try {
@@ -79,27 +64,26 @@ export function normalizePath(path = "") {
   return pathname;
 }
 
-/** @type {WeakMap<object, { clientId: string, page: string | undefined }>} */
+/** @type {WeakMap<object, { page: string | undefined }>} */
 const connections = new WeakMap();
 
-// Gives a new socket an id and the normalized page from its `?page=` param.
+// Stores the normalized page from a new client's `?page=` param.
 /**
- * @param {object} ws
+ * @param {object} client
  * @param {{ url?: string }} req
  */
-export function registerConnection(ws, req) {
+export function registerConnection(client, req) {
   let page = new URL(req.url || "/", "http://localhost/").searchParams.get("page");
   let connection = {
-    clientId: randomUUID(),
     page: page ? normalizePath(page) : undefined,
   };
-  connections.set(ws, connection);
+  connections.set(client, connection);
   return connection;
 }
 
-/** @param {object} ws */
-export function getConnection(ws) {
-  return connections.get(ws);
+/** @param {object} client */
+export function getConnection(client) {
+  return connections.get(client);
 }
 
 // Keeps only `build.templates` for this page; pages without one get `templates: []`.
@@ -154,22 +138,154 @@ export class PageBaselines {
   }
 }
 
-// Sends a reload to each open socket with only the templates for its page, serializing once per page.
+// Sends a reload to each client with only the templates for its page, serializing once per page.
 /**
- * @param {Iterable<any>} clients
+ * @param {Iterable<EventStreamClient>} clients
  * @param {Record<string, any>} obj
- * @param {number} openState
  */
-export function sendReloadByPage(clients, obj, openState) {
+export function sendReloadByPage(clients, obj) {
   let jsonByPage = new Map();
   for(let client of clients) {
-    if(client.readyState !== openState) {
-      continue;
-    }
     let page = getConnection(client)?.page;
     if(!jsonByPage.has(page)) {
       jsonByPage.set(page, JSON.stringify(getReloadForPage(obj, page)));
     }
-    client.send(jsonByPage.get(page));
+    client.send(jsonByPage.get(page), obj.buildId);
+  }
+}
+
+// A tab with this much unsent data has stopped reading; it reconnects once it recovers.
+const MAX_BUFFERED_BYTES = 2 * 1024 * 1024;
+
+// One tab’s open `text/event-stream` response.
+export class EventStreamClient {
+  /** @param {any} res */
+  constructor(res) {
+    this.res = res;
+  }
+
+  /**
+   * @param {string} json
+   * @param {string} [id] Browsers send the last one back as `Last-Event-ID` when they reconnect.
+   */
+  send(json, id) {
+    // HTTP/2 responses buffer on their stream
+    let writable = this.res.stream || this.res;
+    if(writable.destroyed || this.res.writableEnded) {
+      return;
+    }
+    if(writable.writableLength > MAX_BUFFERED_BYTES) {
+      writable.destroy();
+      return;
+    }
+    this.res.write(`${id ? `id: ${id}\n` : ""}data: ${json}\n\n`);
+  }
+
+  close() {
+    if(!this.res.writableEnded) {
+      this.res.end();
+    }
+  }
+}
+
+/**
+ * One-way live reload over Server-Sent Events: a `GET` opens a tab’s stream.
+ */
+export class ReloadChannel {
+  /** @type {Set<EventStreamClient>} */
+  clients = new Set();
+  #options;
+  #blocked = new Set();
+
+  /**
+   * @param {{
+   *   allowedHosts?: string[] | true,
+   *   getBuildId: () => string,
+   *   onClientCount?: (size: number) => void,
+   *   logError: (message: string) => void,
+   * }} options
+   */
+  constructor(options) {
+    this.#options = options;
+  }
+
+  #isAllowed(req) {
+    // HTTP/2 requests have `:authority` instead of `host`
+    let host = req.headers.host || req.headers[":authority"];
+    let { origin } = req.headers;
+    if(isConnectionAllowed({ origin, host }, this.#options.allowedHosts)) {
+      return true;
+    }
+    let key = `${origin} ${host}`;
+    if(!this.#blocked.has(key)) {
+      this.#blocked.add(key);
+      this.#options.logError(`Blocked a live reload connection from origin ${origin} to host ${host}. Add the hostname to the \`allowedHosts\` server option if this was you.`);
+    }
+    return false;
+  }
+
+  #end(res, statusCode) {
+    res.writeHead(statusCode);
+    res.end();
+  }
+
+  handle(req, res) {
+    if(!this.#isAllowed(req)) {
+      return this.#end(res, 403);
+    }
+    if(req.method === "GET") {
+      return this.#open(req, res);
+    }
+    res.setHeader("Allow", "GET");
+    this.#end(res, 405);
+  }
+
+  #open(req, res) {
+    let client = new EventStreamClient(res);
+    registerConnection(client, req);
+    this.clients.add(client);
+    res.on("close", () => {
+      this.clients.delete(client);
+      this.#options.onClientCount?.(this.clients.size);
+    });
+
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-store",
+      // Stops nginx from holding events back
+      "X-Accel-Buffering": "no",
+    });
+
+    // Update the count before the client hears it's connected
+    this.#options.onClientCount?.(this.clients.size);
+
+    let buildId = this.#options.getBuildId();
+    client.send(JSON.stringify({
+      type: "eleventy.status",
+      status: "connected",
+      buildId,
+    }), buildId);
+  }
+
+  /**
+   * @param {string} json
+   * @param {string} [id]
+   */
+  send(json, id) {
+    for(let client of this.clients) {
+      client.send(json, id);
+    }
+  }
+
+  /** @param {Record<string, any>} obj */
+  sendByPage(obj) {
+    sendReloadByPage(this.clients, obj);
+  }
+
+  close() {
+    for(let client of this.clients) {
+      client.close();
+    }
+    this.clients.clear();
   }
 }
