@@ -65,7 +65,7 @@
     "@11ty/eleventy-utils": "^3.0.1",
     "@11ty/node-version-check": "^1.0.1",
     "@11ty/recursive-copy": "^5.1.0",
-    "entities": "^8.1.0",
+    "entities": "^9.0.0",
     "idiomorph": "^0.8.0",
     "mime": "^4.1.2",
     "obug": "^3.0.0",
