@@ -20,7 +20,7 @@ const successCodes = new Set([
   206, // Partial Content
 ]);
 
-async function makeRequestTo(t, server, path, extras = {}) {
+async function makeRequestTo(server, path, extras = {}) {
   let port = await server.getPort();
 
   return new Promise((resolve, reject) => {
@@ -50,7 +50,7 @@ async function makeRequestTo(t, server, path, extras = {}) {
   })
 }
 
-async function fetchHeadersForRequest(t, server, path, extras) {
+async function fetchHeadersForRequest(server, path, extras) {
   let port = await server.getPort();
 
   return new Promise((resolve, reject) => {
@@ -75,18 +75,18 @@ async function fetchHeadersForRequest(t, server, path, extras) {
   })
 }
 
-test("Standard request", async (t) => {
+test("Standard request", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions());
   server.serve(0);
 
-  let data = await makeRequestTo(t, server, "/sample");
+  let data = await makeRequestTo(server, "/sample");
   assert.ok(data.includes("<script "));
   assert.ok(data.startsWith("SAMPLE"));
 
   await server.close();  
 });
 
-test("One sync middleware", async t => {
+test("One sync middleware", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions({
     middleware: [
       function(req, res, next) {
@@ -97,14 +97,14 @@ test("One sync middleware", async t => {
 
   server.serve(0);
 
-  let data = await makeRequestTo(t, server, "/sample");
+  let data = await makeRequestTo(server, "/sample");
   assert.ok(data.includes("<script "));
   assert.ok(data.startsWith("SAMPLE"));
 
   await server.close();
 });
 
-test("Two sync middleware", async t => {
+test("Two sync middleware", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions({
     middleware: [
       function(req, res, next) {
@@ -117,14 +117,14 @@ test("Two sync middleware", async t => {
   }));
   server.serve(0);
 
-  let data = await makeRequestTo(t, server, "/sample");
+  let data = await makeRequestTo(server, "/sample");
   assert.ok(data.includes("<script "));
   assert.ok(data.startsWith("SAMPLE"));
 
   await server.close();
 });
 
-test("One async middleware", async t => {
+test("One async middleware", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions({
     middleware: [
       async function(req, res, next) {
@@ -134,14 +134,14 @@ test("One async middleware", async t => {
   }));
   server.serve(0);
 
-  let data = await makeRequestTo(t, server, "/sample");
+  let data = await makeRequestTo(server, "/sample");
   assert.ok(data.includes("<script "));
   assert.ok(data.startsWith("SAMPLE"));
 
   await server.close();
 });
 
-test("Two async middleware", async t => {
+test("Two async middleware", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions({
     middleware: [
       async function(req, res, next) {
@@ -154,14 +154,14 @@ test("Two async middleware", async t => {
   }));
   server.serve(0);
 
-  let data = await makeRequestTo(t, server, "/sample");
+  let data = await makeRequestTo(server, "/sample");
   assert.ok(data.includes("<script "));
   assert.ok(data.startsWith("SAMPLE"));
 
   await server.close();
 });
 
-test("Async middleware that writes", async t => {
+test("Async middleware that writes", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions({
     // enabled: false,
     middleware: [
@@ -182,14 +182,14 @@ test("Async middleware that writes", async t => {
   }));
   server.serve(0);
 
-  let data = await makeRequestTo(t, server, "/sample");
+  let data = await makeRequestTo(server, "/sample");
   assert.ok(data.includes("<script "));
   assert.ok(data.startsWith("Injected"));
 
   await server.close();
 });
 
-test("Second async middleware that writes", async t => {
+test("Second async middleware that writes", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions({
     // enabled: false,
     middleware: [
@@ -219,7 +219,7 @@ test("Second async middleware that writes", async t => {
   }));
   server.serve(0);
 
-  let data = await makeRequestTo(t, server, "/sample");
+  let data = await makeRequestTo(server, "/sample");
   assert.ok(data.includes("<script "));
   assert.ok(data.startsWith("Injected"));
 
@@ -227,7 +227,7 @@ test("Second async middleware that writes", async t => {
 });
 
 
-test("Second middleware that consumes first middleware response body, issue #29", async t => {
+test("Second middleware that consumes first middleware response body, issue #29", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions({
     // enabled: false,
     middleware: [
@@ -246,14 +246,14 @@ test("Second middleware that consumes first middleware response body, issue #29"
   }));
   server.serve(0);
 
-  let data = await makeRequestTo(t, server, "/sample");
+  let data = await makeRequestTo(server, "/sample");
   assert.ok(data.includes("<script "));
   assert.ok(data.startsWith("First Second "));
 
   await server.close();
 });
 
-test("Two middlewares, end() in the first, skip the second", async t => {
+test("Two middlewares, end() in the first, skip the second", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions({
     // enabled: false,
     middleware: [
@@ -271,7 +271,7 @@ test("Two middlewares, end() in the first, skip the second", async t => {
   }));
   server.serve(0);
 
-  let data = await makeRequestTo(t, server, "/sample");
+  let data = await makeRequestTo(server, "/sample");
   assert.ok(data.includes("<script "));
   assert.ok(data.startsWith("First "));
   assert.ok(!data.startsWith("First Second "));
@@ -279,18 +279,18 @@ test("Two middlewares, end() in the first, skip the second", async t => {
   await server.close();
 });
 
-test("Fun unicode paths", async t => {
+test("Fun unicode paths", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions());
   server.serve(0);
 
-  let data = await makeRequestTo(t, server, encodeURI(`/zach’s.html`));
+  let data = await makeRequestTo(server, encodeURI(`/zach’s.html`));
   assert.ok(data.includes("<script "));
   assert.ok(data.startsWith("This is a test"));
 
   await server.close();
 });
 
-test("Content-Type header via middleware", async t => {
+test("Content-Type header via middleware", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions({
     middleware: [
       function (req, res, next) {
@@ -304,13 +304,13 @@ test("Content-Type header via middleware", async t => {
   }));
   server.serve(0);
 
-  let data = await fetchHeadersForRequest(t, server, encodeURI(`/index.php`));
+  let data = await fetchHeadersForRequest(server, encodeURI(`/index.php`));
   assert.ok(data['content-type'] === 'text/html; charset=utf-8');
 
   await server.close();
 });
 
-test("Content-Range request", async (t) => {
+test("Content-Range request", async () => {
   let server = new DevServer(
     "test-server",
     "./test/stubs/",
@@ -319,19 +319,19 @@ test("Content-Range request", async (t) => {
   server.serve(0);
 
   const options = { headers: { Range: "bytes=0-48" } };
-  let headers = await fetchHeadersForRequest(t, server, `/index.html`, options);
+  let headers = await fetchHeadersForRequest(server, `/index.html`, options);
   assert.ok("accept-ranges" in headers);
   assert.ok(headers["accept-ranges"] === "bytes");
   assert.ok("content-range" in headers);
   assert.ok(headers["content-range"].startsWith("bytes 0-48/"));
 
-  let data = await makeRequestTo(t, server, `/index.html`, options);
+  let data = await makeRequestTo(server, `/index.html`, options);
   assert.equal(data.length, 49);
 
   await server.close();
 });
 
-test("Content-Range request multiple is handled as full", async (t) => {
+test("Content-Range request multiple is handled as full", async () => {
   let server = new DevServer(
     "test-server",
     "./test/stubs/",
@@ -340,14 +340,14 @@ test("Content-Range request multiple is handled as full", async (t) => {
   server.serve(0);
 
   const options = { headers: { Range: "bytes=0-10,20-30" } };
-  let headers = await fetchHeadersForRequest(t, server, `/index.html`, options);
+  let headers = await fetchHeadersForRequest(server, `/index.html`, options);
   assert.ok("accept-ranges" in headers);
   assert.ok(headers["accept-ranges"] === "bytes");
 
   await server.close();
 });
 
-test("Content-Range request invalid", async (t) => {
+test("Content-Range request invalid", async () => {
   let server = new DevServer(
     "test-server",
     "./test/stubs/",
@@ -356,14 +356,14 @@ test("Content-Range request invalid", async (t) => {
   server.serve(0);
 
   const options = { headers: { Range: "bytes=xxx" } };
-  let data = await fetchHeadersForRequest(t, server, `/index.html`, options);
+  let data = await fetchHeadersForRequest(server, `/index.html`, options);
   assert.ok("accept-ranges" in data);
   assert.ok(data["accept-ranges"] === "bytes");
 
   await server.close();
 });
 
-test("Content-Range request invalid reversed", async (t) => {
+test("Content-Range request invalid reversed", async () => {
   let server = new DevServer(
     "test-server",
     "./test/stubs/",
@@ -371,13 +371,13 @@ test("Content-Range request invalid reversed", async (t) => {
   );
   server.serve(0);
   const options = { headers: { Range: "bytes=100-0" } };
-  await assert.rejects(() => fetchHeadersForRequest(t, server, `/index.html`, options), {
+  await assert.rejects(() => fetchHeadersForRequest(server, `/index.html`, options), {
     message: 'Invalid status code 416'
   })
   await server.close();
 })
 
-test("Standard request does not include range headers", async (t) => {
+test("Standard request does not include range headers", async () => {
   let server = new DevServer(
     "test-server",
     "./test/stubs/",
@@ -385,14 +385,14 @@ test("Standard request does not include range headers", async (t) => {
   );
   server.serve(0);
 
-  let data = await fetchHeadersForRequest(t, server, `/index.html`);
+  let data = await fetchHeadersForRequest(server, `/index.html`);
   assert.equal("accept-ranges" in data, false);
   assert.equal("content-range" in data, false);
 
   await server.close();
 });
 
-test("Setting default response headers", async (t) => {
+test("Setting default response headers", async () => {
   let server = new DevServer(
     "test-server",
     "./test/stubs/",
@@ -405,14 +405,14 @@ test("Setting default response headers", async (t) => {
   );
   server.serve(0);
 
-  let data = await fetchHeadersForRequest(t, server, "/index.html");
+  let data = await fetchHeadersForRequest(server, "/index.html");
   assert.ok(data["access-control-allow-origin"] === "*");
   assert.ok(data["x-foo"] === "y-bar");
 
   await server.close();
 });
 
-test("Default response headers cannot overwrite content-type", async (t) => {
+test("Default response headers cannot overwrite content-type", async () => {
   let server = new DevServer(
     "test-server",
     "./test/stubs/",
@@ -424,7 +424,7 @@ test("Default response headers cannot overwrite content-type", async (t) => {
   );
   server.serve(0);
 
-  let data = await fetchHeadersForRequest(t, server, "/index.html");
+  let data = await fetchHeadersForRequest(server, "/index.html");
   assert.ok(data["content-type"].startsWith("text/html"));
 
   await server.close();
@@ -439,7 +439,7 @@ function withResolvers() {
   };
 }
 
-test("Live reload event stream", async (t) => {
+test("Live reload event stream", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions());
   server.serve(0);
 
@@ -481,7 +481,7 @@ test("Live reload event stream", async (t) => {
   }
 });
 
-test("Live reload buildId, sent on connect and bumped by each reload", async (t) => {
+test("Live reload buildId, sent on connect and bumped by each reload", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions());
   server.serve(0);
 
@@ -512,7 +512,7 @@ test("Live reload buildId, sent on connect and bumped by each reload", async (t)
   await server.close();
 });
 
-test("Live reload uses a buildId passed to reload", async (t) => {
+test("Live reload uses a buildId passed to reload", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions());
   server.serve(0);
 
@@ -532,7 +532,7 @@ test("Live reload uses a buildId passed to reload", async (t) => {
   await server.close();
 });
 
-test("Live reload buildId is unique per server instance", async (t) => {
+test("Live reload buildId is unique per server instance", async () => {
   let first = new DevServer("test-server", "./test/stubs/", getOptions());
   let second = new DevServer("test-server", "./test/stubs/", getOptions());
 

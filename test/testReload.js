@@ -28,7 +28,7 @@ function getTemplates() {
   ];
 }
 
-test("reload() filters templates by `files` without `build.outputs`", async (t) => {
+test("reload() filters templates by `files` without `build.outputs`", async () => {
   let { server, notifications } = getServer();
 
   server.reload({
@@ -41,7 +41,7 @@ test("reload() filters templates by `files` without `build.outputs`", async (t) 
   await server.close();
 });
 
-test("reload() sends all templates with `build.outputs`", async (t) => {
+test("reload() sends all templates with `build.outputs`", async () => {
   let { server, notifications } = getServer();
 
   server.reload({
@@ -54,7 +54,7 @@ test("reload() sends all templates with `build.outputs`", async (t) => {
   await server.close();
 });
 
-test("reload() sends no templates without `build.outputs` when domDiff is disabled", async (t) => {
+test("reload() sends no templates without `build.outputs` when domDiff is disabled", async () => {
   let { server, notifications } = getServer({ domDiff: false });
 
   server.reload({
@@ -67,7 +67,7 @@ test("reload() sends no templates without `build.outputs` when domDiff is disabl
   await server.close();
 });
 
-test("reload() sends templates without content with `build.outputs` when domDiff is disabled", async (t) => {
+test("reload() sends templates without content with `build.outputs` when domDiff is disabled", async () => {
   let { server, notifications } = getServer({ domDiff: false });
 
   server.reload({
@@ -83,67 +83,67 @@ test("reload() sends templates without content with `build.outputs` when domDiff
   await server.close();
 });
 
-test("Client: legacy build morphs a matching template from `files`", (t) => {
+test("Client: legacy build morphs a matching template from `files`", () => {
   let result = ReloadClient.getReloadAction(["./about.njk"], { templates: getTemplates() }, "/about/");
   assert.equal(result.action, "morph");
   assert.deepEqual(result.templates.map(({ url }) => url), ["/about/"]);
 });
 
-test("Client: legacy build reloads when the template input is not in `files`", (t) => {
+test("Client: legacy build reloads when the template input is not in `files`", () => {
   let result = ReloadClient.getReloadAction(["./_data/site.json"], { templates: getTemplates() }, "/about/");
   assert.deepEqual(result, { action: "reload", via: "ineligible domdiff" });
 });
 
-test("Client: outputs build morphs a matching template regardless of `files`", (t) => {
+test("Client: outputs build morphs a matching template regardless of `files`", () => {
   let result = ReloadClient.getReloadAction(["./_data/site.json"], { outputs: true, templates: getTemplates() }, "/about/");
   assert.equal(result.action, "morph");
   assert.deepEqual(result.templates.map(({ url }) => url), ["/about/"]);
 });
 
-test("Client: outputs build reloads for changed passthrough copy", (t) => {
+test("Client: outputs build reloads for changed passthrough copy", () => {
   let result = ReloadClient.getReloadAction(["./img.png"], { outputs: true, templates: [], passthrough: ["/img.png"] }, "/about/");
   assert.deepEqual(result, { action: "reload", via: "passthrough copy" });
 });
 
-test("Client: outputs build does nothing when this page did not change", (t) => {
+test("Client: outputs build does nothing when this page did not change", () => {
   let result = ReloadClient.getReloadAction(["./index.njk"], { outputs: true, templates: getTemplates().slice(0, 1), passthrough: [] }, "/about/");
   assert.deepEqual(result, { action: "none" });
 });
 
-test("Client: outputs build prefers morphing over passthrough reload", (t) => {
+test("Client: outputs build prefers morphing over passthrough reload", () => {
   let result = ReloadClient.getReloadAction([], { outputs: true, templates: getTemplates(), passthrough: ["/img.png"] }, "/");
   assert.equal(result.action, "morph");
 });
 
-test("Client: matches a template when the pathname ends in `index.html`", (t) => {
+test("Client: matches a template when the pathname ends in `index.html`", () => {
   let result = ReloadClient.getReloadAction([], { outputs: true, templates: getTemplates() }, "/about/index.html");
   assert.deepEqual(result.templates.map(({ url }) => url), ["/about/"]);
 });
 
-test("Client: matches a template when the pathname has no trailing slash", (t) => {
+test("Client: matches a template when the pathname has no trailing slash", () => {
   let result = ReloadClient.getReloadAction([], { outputs: true, templates: getTemplates() }, "/about");
   assert.deepEqual(result.templates.map(({ url }) => url), ["/about/"]);
 });
 
-test("Client: matches a template with a percent-encoded pathname", (t) => {
+test("Client: matches a template with a percent-encoded pathname", () => {
   let templates = [{ url: "/café/", inputPath: "./café.njk", content: "Café" }];
   let result = ReloadClient.getReloadAction([], { outputs: true, templates }, "/caf%C3%A9/");
   assert.deepEqual(result.templates.map(({ url }) => url), ["/café/"]);
 });
 
-test("Client: outputs build reloads a changed page when domDiff is disabled", (t) => {
+test("Client: outputs build reloads a changed page when domDiff is disabled", () => {
   let templates = getTemplates().map(({ url, inputPath }) => ({ url, inputPath }));
   let result = ReloadClient.getReloadAction([], { outputs: true, templates }, "/about/");
   assert.deepEqual(result, { action: "reload", via: "domdiff disabled" });
 });
 
-test("Client: outputs build does nothing for an untouched page when domDiff is disabled", (t) => {
+test("Client: outputs build does nothing for an untouched page when domDiff is disabled", () => {
   let templates = getTemplates().slice(0, 1).map(({ url, inputPath }) => ({ url, inputPath }));
   let result = ReloadClient.getReloadAction([], { outputs: true, templates, passthrough: [] }, "/about/");
   assert.deepEqual(result, { action: "none" });
 });
 
-test("Client: normalizePath", (t) => {
+test("Client: normalizePath", () => {
   assert.equal(ReloadClient.normalizePath("/"), "/");
   assert.equal(ReloadClient.normalizePath("/index.html"), "/");
   assert.equal(ReloadClient.normalizePath("/about"), "/about");
@@ -154,7 +154,7 @@ test("Client: normalizePath", (t) => {
   assert.equal(ReloadClient.normalizePath("/about.html"), "/about.html");
 });
 
-test("Client: getEventsUrl keeps pathPrefix from the script URL", (t) => {
+test("Client: getEventsUrl keeps pathPrefix from the script URL", () => {
   assert.equal(ReloadClient.getEventsUrl("http://localhost:8080/about/", "http://localhost:8080/.ba/reload-client.js"), "http://localhost:8080/.ba/events?page=%2Fabout%2F");
   assert.equal(ReloadClient.getEventsUrl("https://example.test/prefix/about/", "https://example.test/prefix/.ba/reload-client.js?v=1"), "https://example.test/prefix/.ba/events?page=%2Fprefix%2Fabout%2F");
 });
@@ -235,19 +235,19 @@ function getDocument() {
   return doc;
 }
 
-test("Client: getFocusPath uses the nearest id, then `<html>`", (t) => {
+test("Client: getFocusPath uses the nearest id, then `<html>`", () => {
   let doc = getDocument();
   assert.deepEqual(ReloadClient.getFocusPath(doc.link, doc), { id: "site-nav", selector: "a:nth-of-type(2)" });
   assert.deepEqual(ReloadClient.getFocusPath(doc.button, doc), { id: undefined, selector: "body:nth-of-type(1) > div:nth-of-type(2) > button:nth-of-type(1)" });
 });
 
-test("Client: captureFocus ignores body", (t) => {
+test("Client: captureFocus ignores body", () => {
   let doc = getDocument();
   doc.activeElement = doc.body;
   assert.equal(ReloadClient.captureFocus(doc), undefined);
 });
 
-test("Client: restoreFocus refocuses a kept element", async (t) => {
+test("Client: restoreFocus refocuses a kept element", async () => {
   let doc = getDocument();
   doc.link.focus();
   let state = ReloadClient.captureFocus(doc);
@@ -258,7 +258,7 @@ test("Client: restoreFocus refocuses a kept element", async (t) => {
   assert.deepEqual(doc.link.focusOptions, { preventScroll: true });
 });
 
-test("Client: restoreFocus refocuses a replacement with the same tag", async (t) => {
+test("Client: restoreFocus refocuses a replacement with the same tag", async () => {
   let doc = getDocument();
   doc.button.focus();
   let state = ReloadClient.captureFocus(doc);
@@ -270,7 +270,7 @@ test("Client: restoreFocus refocuses a replacement with the same tag", async (t)
   assert.equal(doc.activeElement, replacement);
 });
 
-test("Client: restoreFocus skips a replacement with a different tag", async (t) => {
+test("Client: restoreFocus skips a replacement with a different tag", async () => {
   let doc = getDocument();
   doc.link.focus();
   let state = ReloadClient.captureFocus(doc);
@@ -281,7 +281,7 @@ test("Client: restoreFocus skips a replacement with a different tag", async (t) 
   assert.equal(doc.activeElement, doc.body);
 });
 
-test("Client: restoreFocus leaves focus a page script moved", async (t) => {
+test("Client: restoreFocus leaves focus a page script moved", async () => {
   let doc = getDocument();
   doc.link.focus();
   let state = ReloadClient.captureFocus(doc);
@@ -291,7 +291,7 @@ test("Client: restoreFocus leaves focus a page script moved", async (t) => {
   assert.equal(doc.activeElement, doc.button);
 });
 
-test("Client: restoreFocus restores text selection", async (t) => {
+test("Client: restoreFocus restores text selection", async () => {
   let doc = getDocument();
   let input = doc.el("input");
   doc.body.append(input);
@@ -307,7 +307,7 @@ test("Client: restoreFocus restores text selection", async (t) => {
   assert.deepEqual([replacement.selectionStart, replacement.selectionEnd, replacement.selectionDirection], [2, 5, "backward"]);
 });
 
-test("Client: restoreFocus waits for a replaced custom element to render", async (t) => {
+test("Client: restoreFocus waits for a replaced custom element to render", async () => {
   let doc = getDocument();
   doc.defaultView = { customElements: { get: (name) => name === "wa-switch" ? class {} : undefined } };
   let host = doc.el("wa-switch");
@@ -333,7 +333,7 @@ test("Client: restoreFocus waits for a replaced custom element to render", async
   assert.equal(doc.activeElement, replacement);
 });
 
-test("Client: restoreFocus finds a replacement whose parent changed by its order among same-tag elements", async (t) => {
+test("Client: restoreFocus finds a replacement whose parent changed by its order among same-tag elements", async () => {
   let doc = getDocument();
   doc.button.focus();
   let state = ReloadClient.captureFocus(doc);

@@ -44,7 +44,7 @@ afterEach(async () => {
   }
 });
 
-test("Morph: syncs `<html>` attributes (#6)", async (t) => {
+test("Morph: syncs `<html>` attributes (#6)", async () => {
   let doc = load(`<!doctype html><html lang="en" class="old"><body><p>Before</p></body></html>`);
   let reloads = await morph(`<!doctype html><html lang="fr" data-theme="dark"><body><p>After</p></body></html>`);
 
@@ -55,7 +55,7 @@ test("Morph: syncs `<html>` attributes (#6)", async (t) => {
   assert.deepEqual(reloads, []);
 });
 
-test("Morph: works when the markup omits `</html>`", async (t) => {
+test("Morph: works when the markup omits `</html>`", async () => {
   let doc = load(`<!doctype html><title>Before</title><p>Before`);
   await morph(`<!doctype html><title>After</title><p>After`);
 
@@ -64,7 +64,7 @@ test("Morph: works when the markup omits `</html>`", async (t) => {
   assert.equal(doc.querySelectorAll("html, head, body").length, 3);
 });
 
-test("Morph: keeps a `<link>` whose only change is a removed cache-busting param (#18)", async (t) => {
+test("Morph: keeps a `<link>` whose only change is a removed cache-busting param (#18)", async () => {
   let doc = load(`<!doctype html><head><link rel="stylesheet" href="/style.css?_bust=123"></head><body></body>`);
   let link = doc.querySelector("link");
   await morph(`<!doctype html><head><link rel="stylesheet" href="/style.css"></head><body></body>`);
@@ -73,7 +73,7 @@ test("Morph: keeps a `<link>` whose only change is a removed cache-busting param
   assert.equal(link.getAttribute("href"), "/style.css?_bust=123");
 });
 
-test("Morph: updates a `<link>` that gains or loses its `href`", async (t) => {
+test("Morph: updates a `<link>` that gains or loses its `href`", async () => {
   let doc = load(`<!doctype html><head><link rel="preload" as="font" href="/font.woff2"></head><body></body>`);
   let reloads = await morph(`<!doctype html><head><link rel="preload" as="font"></head><body><p>After</p></body>`);
   assert.equal(doc.querySelector("link").hasAttribute("href"), false);
@@ -86,14 +86,14 @@ test("Morph: updates a `<link>` that gains or loses its `href`", async (t) => {
   assert.equal(doc.querySelector("p")?.textContent, "After");
 });
 
-test("Morph: keeps stylesheets inserted via script", async (t) => {
+test("Morph: keeps stylesheets inserted via script", async () => {
   let doc = load(`<!doctype html><head><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/component.css"></head><body></body>`);
   await morph(`<!doctype html><head><link rel="stylesheet" href="/style.css"></head><body></body>`);
 
   assert.deepEqual([...doc.querySelectorAll("link")].map(link => link.getAttribute("href")), ["/style.css", "/component.css"]);
 });
 
-test("Morph: doesn’t update or remove `data-buildawesome-preserve` elements", async (t) => {
+test("Morph: doesn’t update or remove `data-buildawesome-preserve` elements", async () => {
   let doc = load(`<!doctype html><body><div data-buildawesome-preserve>Client</div><p>Before</p><aside data-buildawesome-preserve>Client</aside></body>`);
   await morph(`<!doctype html><body><div data-buildawesome-preserve>Server</div><p>After</p></body>`);
 
@@ -102,14 +102,14 @@ test("Morph: doesn’t update or remove `data-buildawesome-preserve` elements", 
   assert.equal(doc.querySelector("p").textContent, "After");
 });
 
-test("Morph: doesn’t update `inert` elements", async (t) => {
+test("Morph: doesn’t update `inert` elements", async () => {
   let doc = load(`<!doctype html><body><div inert>Before</div></body>`);
   await morph(`<!doctype html><body><div inert>After</div></body>`);
 
   assert.equal(doc.querySelector("div").textContent, "Before");
 });
 
-test("Morph: doesn’t update a focused input", async (t) => {
+test("Morph: doesn’t update a focused input", async () => {
   let doc = load(`<!doctype html><body><input value="server"></body>`);
   let input = doc.querySelector("input");
   input.focus();
@@ -122,7 +122,7 @@ test("Morph: doesn’t update a focused input", async (t) => {
   assert.equal(doc.activeElement, input);
 });
 
-test("Morph: moves elements with an `id` instead of recreating them", async (t) => {
+test("Morph: moves elements with an `id` instead of recreating them", async () => {
   let doc = load(`<!doctype html><body><div><input id="first"></div><div><input id="second"></div></body>`);
   let first = doc.getElementById("first");
   await morph(`<!doctype html><body><div><input id="second"></div><div><input id="first"></div></body>`);
@@ -133,17 +133,17 @@ test("Morph: moves elements with an `id` instead of recreating them", async (t) 
   assert.equal(doc.querySelectorAll("div[hidden]").length, 0);
 });
 
-test("Morph: reloads when a `<script>` changes", async (t) => {
+test("Morph: reloads when a `<script>` changes", async () => {
   load(`<!doctype html><body><script>let a = 1;</script></body>`);
   assert.deepEqual(await morph(`<!doctype html><body><script>let a = 2;</script></body>`), ["<script> modified"]);
 });
 
-test("Morph: doesn’t reload for an unchanged `<script>`", async (t) => {
+test("Morph: doesn’t reload for an unchanged `<script>`", async () => {
   load(`<!doctype html><body><script>let a = 1;</script><p>Before</p></body>`);
   assert.deepEqual(await morph(`<!doctype html><body><script>let a = 1;</script><p>After</p></body>`), []);
 });
 
-test("Morph: reloads when a `<script>` is added, including inside a new element", async (t) => {
+test("Morph: reloads when a `<script>` is added, including inside a new element", async () => {
   load(`<!doctype html><body></body>`);
   assert.deepEqual(await morph(`<!doctype html><body><script>let a = 1;</script></body>`), ["<script> added"]);
 
@@ -151,7 +151,7 @@ test("Morph: reloads when a `<script>` is added, including inside a new element"
   assert.deepEqual(await morph(`<!doctype html><body><div><script>let a = 1;</script></div></body>`), ["<script> added"]);
 });
 
-test("Morph: updates an existing declarative shadow root in place (#90)", async (t) => {
+test("Morph: updates an existing declarative shadow root in place (#90)", async () => {
   let doc = load(`<!doctype html><body><my-el><span>Before</span></my-el></body>`);
   let host = doc.querySelector("my-el");
   host.attachShadow({ mode: "open" }).innerHTML = `<p>Before</p>`;
@@ -166,7 +166,7 @@ test("Morph: updates an existing declarative shadow root in place (#90)", async 
   assert.equal(host.textContent, "After");
 });
 
-test("Morph: attaches declarative shadow roots for new elements, including nested ones", async (t) => {
+test("Morph: attaches declarative shadow roots for new elements, including nested ones", async () => {
   let doc = load(`<!doctype html><body></body>`);
   await morph(`<!doctype html><body><div><outer-el><template shadowrootmode="open"><b>Outer</b><inner-el><template shadowrootmode="open"><i>Inner</i></template></inner-el></template></outer-el></div></body>`);
 
@@ -184,7 +184,7 @@ async function update(html, script, next) {
   return { doc, reloads };
 }
 
-test("Three-way: keeps `<html>` attributes set by page scripts and applies source changes", async (t) => {
+test("Three-way: keeps `<html>` attributes set by page scripts and applies source changes", async () => {
   let { doc } = await update(
     `<!doctype html><html lang="en"><body></body></html>`,
     (doc) => doc.documentElement.setAttribute("data-theme", "dark"),
@@ -195,7 +195,7 @@ test("Three-way: keeps `<html>` attributes set by page scripts and applies sourc
   assert.equal(doc.documentElement.getAttribute("lang"), "fr");
 });
 
-test("Three-way: without the served HTML, page script changes are reset", async (t) => {
+test("Three-way: without the served HTML, page script changes are reset", async () => {
   let doc = load(`<!doctype html><html lang="en"><body></body></html>`);
   doc.documentElement.setAttribute("data-theme", "dark");
   await morph(`<!doctype html><html lang="fr"><body></body></html>`);
@@ -203,7 +203,7 @@ test("Three-way: without the served HTML, page script changes are reset", async 
   assert.equal(doc.documentElement.hasAttribute("data-theme"), false);
 });
 
-test("Three-way: keeps an attribute a page script changed unless the source changed it too", async (t) => {
+test("Three-way: keeps an attribute a page script changed unless the source changed it too", async () => {
   let html = (media) => `<!doctype html><head><link rel="stylesheet" href="/defer.css" media="${media}"></head><body></body>`;
   let loaded = (doc) => doc.querySelector("link").setAttribute("media", "all");
 
@@ -214,7 +214,7 @@ test("Three-way: keeps an attribute a page script changed unless the source chan
   assert.equal(doc.querySelector("link").getAttribute("media"), "screen");
 });
 
-test("Three-way: keeps nodes added by page scripts and removes nodes removed from the source", async (t) => {
+test("Three-way: keeps nodes added by page scripts and removes nodes removed from the source", async () => {
   let { doc } = await update(
     `<!doctype html><body><nav><span class="source">Source</span><p>Removed</p></nav></body>`,
     (doc) => {
@@ -230,7 +230,7 @@ test("Three-way: keeps nodes added by page scripts and removes nodes removed fro
   assert.equal(doc.querySelector("p"), null);
 });
 
-test("Three-way: doesn’t re-add nodes a page script removed", async (t) => {
+test("Three-way: doesn’t re-add nodes a page script removed", async () => {
   let { doc } = await update(
     `<!doctype html><body><div class="banner">Dismiss me</div><p>Before</p></body>`,
     (doc) => doc.querySelector(".banner").remove(),
@@ -241,7 +241,7 @@ test("Three-way: doesn’t re-add nodes a page script removed", async (t) => {
   assert.equal(doc.querySelector("p").textContent, "After");
 });
 
-test("Three-way: keeps text a page script changed unless the source changed it too", async (t) => {
+test("Three-way: keeps text a page script changed unless the source changed it too", async () => {
   let html = (time, label) => `<!doctype html><body><time>${time}</time><p>${label}</p></body>`;
   let { doc } = await update(
     html("2026-10-29", "Before"),
@@ -260,7 +260,7 @@ test("Three-way: keeps text a page script changed unless the source changed it t
   assert.equal(doc.querySelector("time").textContent, "2026-10-30");
 });
 
-test("Three-way: keeps form state a user changed", async (t) => {
+test("Three-way: keeps form state a user changed", async () => {
   let { doc } = await update(
     `<!doctype html><body><input type="checkbox"><p>Before</p></body>`,
     (doc) => doc.querySelector("input").checked = true,
@@ -290,7 +290,7 @@ function defineComponent(window) {
   });
 }
 
-test("Three-way: works with script-rendered components like Web Awesome", async (t) => {
+test("Three-way: works with script-rendered components like Web Awesome", async () => {
   let html = (variant, label) => `<!doctype html><body><wa-like${variant ? ` variant="${variant}"` : ""}>${label}</wa-like><wa-like id="other">Other</wa-like></body>`;
   let host, button;
   let { doc } = await update(html("", "Before"), (doc) => {

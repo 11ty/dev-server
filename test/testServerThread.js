@@ -51,7 +51,7 @@ async function inBothModes(options, fn) {
   return results;
 }
 
-test("serverThread is on by default", async (t) => {
+test("serverThread is on by default", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions());
   assert.ok(server.isThreaded);
   await server.close();
@@ -61,7 +61,7 @@ test("serverThread is on by default", async (t) => {
   await optOut.close();
 });
 
-test("Static file responses match in both modes", async (t) => {
+test("Static file responses match in both modes", async () => {
   let { threaded, single } = await inBothModes({}, (server) => request(server, "/sample"));
 
   assert.ok(threaded.body.startsWith("SAMPLE"));
@@ -71,7 +71,7 @@ test("Static file responses match in both modes", async (t) => {
   assert.equal(threaded.headers["content-type"], single.headers["content-type"]);
 });
 
-test("404 responses match in both modes", async (t) => {
+test("404 responses match in both modes", async () => {
   let { threaded, single } = await inBothModes({}, (server) => request(server, "/this-does-not-exist"));
 
   assert.equal(threaded.statusCode, 404);
@@ -81,7 +81,7 @@ test("404 responses match in both modes", async (t) => {
   assert.equal(threaded.body, single.body);
 });
 
-test("Redirects match in both modes", async (t) => {
+test("Redirects match in both modes", async () => {
   let { threaded, single } = await inBothModes({}, (server) => request(server, "/route1"));
 
   assert.equal(threaded.statusCode, 301);
@@ -90,7 +90,7 @@ test("Redirects match in both modes", async (t) => {
   assert.equal(single.headers.location, threaded.headers.location);
 });
 
-test("onRequest is proxied to the main thread", async (t) => {
+test("onRequest is proxied to the main thread", async () => {
   let options = {
     onRequest: {
       "/dynamic/:name": ({ patternGroups }) => {
@@ -110,7 +110,7 @@ test("onRequest is proxied to the main thread", async (t) => {
   assert.equal(threaded.body, single.body);
 });
 
-test("onRequest returning nothing falls through to static files", async (t) => {
+test("onRequest returning nothing falls through to static files", async () => {
   let options = {
     onRequest: {
       "/sample": () => undefined,
@@ -123,7 +123,7 @@ test("onRequest returning nothing falls through to static files", async (t) => {
   assert.equal(threaded.body, single.body);
 });
 
-test("Middleware that ends the response is proxied", async (t) => {
+test("Middleware that ends the response is proxied", async () => {
   let options = {
     middleware: [
       async function(req, res, next) {
@@ -141,7 +141,7 @@ test("Middleware that ends the response is proxied", async (t) => {
   assert.equal(threaded.body, single.body);
 });
 
-test("Middleware headers survive fallthrough to the server thread", async (t) => {
+test("Middleware headers survive fallthrough to the server thread", async () => {
   let options = {
     middleware: [
       function(req, res, next) {
@@ -161,7 +161,7 @@ test("Middleware headers survive fallthrough to the server thread", async (t) =>
   assert.equal(threaded.body, single.body);
 });
 
-test("`dotfiles` option reaches the server thread", async (t) => {
+test("`dotfiles` option reaches the server thread", async () => {
   let aliases = { "/junk/": "./test/stubs-passthrough-junk/" };
   let hidden = await inBothModes({ aliases }, (server) => request(server, "/junk/.htaccess"));
   let shown = await inBothModes({ aliases, dotfiles: true }, (server) => request(server, "/junk/.htaccess"));
@@ -172,7 +172,7 @@ test("`dotfiles` option reaches the server thread", async (t) => {
   assert.equal(shown.single.statusCode, 200);
 });
 
-test("Aliases set before serve() reach the server thread", async (t) => {
+test("Aliases set before serve() reach the server thread", async () => {
   let results = {};
   for(let serverThread of [true, false]) {
     let server = new DevServer("test-server", "./test/stubs/", getOptions({ serverThread }));
@@ -186,7 +186,7 @@ test("Aliases set before serve() reach the server thread", async (t) => {
   assert.equal(results.threaded.body, results.single.body);
 });
 
-test("Passthrough copies reach the server thread", async (t) => {
+test("Passthrough copies reach the server thread", async () => {
   let results = {};
   for(let serverThread of [true, false]) {
     let server = new DevServer("test-server", "./test/stubs/", getOptions({ serverThread }));
@@ -210,7 +210,7 @@ test("Passthrough copies reach the server thread", async (t) => {
   assert.equal(results.threaded.noJunk.statusCode, results.single.noJunk.statusCode);
 });
 
-test("Injected scripts are served off the main thread", async (t) => {
+test("Injected scripts are served off the main thread", async () => {
   let { threaded, single } = await inBothModes({}, async (server) => {
     return {
       client: await request(server, "/.ba/reload-client.js"),
@@ -225,7 +225,7 @@ test("Injected scripts are served off the main thread", async (t) => {
 });
 
 // Serial: blocking the main thread would stall other tests in this file running at the same time
-test("Requests are served while the main thread is blocked", async (t) => {
+test("Requests are served while the main thread is blocked", async () => {
   // The probe has to run off the main thread, otherwise it would be blocked
   // alongside the server and the test would pass no matter what.
   const PROBE = `
@@ -298,7 +298,7 @@ async function sendRequest(server, path, { method = "GET", body } = {}) {
   });
 }
 
-test("Request bodies are proxied to middleware", async (t) => {
+test("Request bodies are proxied to middleware", async () => {
   let options = {
     middleware: [
       function(req, res, next) {
@@ -320,7 +320,7 @@ test("Request bodies are proxied to middleware", async (t) => {
   assert.equal(threaded.body, single.body);
 });
 
-test("A throwing middleware does not take down the server", async (t) => {
+test("A throwing middleware does not take down the server", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions({
     middleware: [
       function(req, res, next) {
@@ -354,7 +354,7 @@ function withTimeout(promise, ms = 10000) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-test("getPort() rejects when every port is in use", async (t) => {
+test("getPort() rejects when every port is in use", async () => {
   let blocker = http.createServer();
   await new Promise((resolve) => blocker.listen(0, "127.0.0.1", resolve));
 
@@ -369,7 +369,7 @@ test("getPort() rejects when every port is in use", async (t) => {
   await new Promise((resolve) => blocker.close(resolve));
 });
 
-test("getPort() rejects when the server thread fails to start", async (t) => {
+test("getPort() rejects when the server thread fails to start", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions({
     https: { key: "./does-not-exist.key", cert: "./does-not-exist.cert" },
   }));
@@ -380,7 +380,7 @@ test("getPort() rejects when the server thread fails to start", async (t) => {
   await server.close();
 });
 
-test("Streaming middleware responses reach the client before they end", async (t) => {
+test("Streaming middleware responses reach the client before they end", async () => {
   let firstChunkReceived;
   let firstChunkPromise = new Promise((resolve) => firstChunkReceived = resolve);
 
@@ -414,7 +414,7 @@ test("Streaming middleware responses reach the client before they end", async (t
   await server.close();
 });
 
-test("Proxied middleware sees the client disconnect", async (t) => {
+test("Proxied middleware sees the client disconnect", async () => {
   let closed;
   let closedPromise = new Promise((resolve) => closed = resolve);
 
@@ -440,7 +440,7 @@ test("Proxied middleware sees the client disconnect", async (t) => {
   await server.close();
 });
 
-test("Proxied requests expose socket details to middleware", async (t) => {
+test("Proxied requests expose socket details to middleware", async () => {
   let options = {
     middleware: [
       function(req, res, next) {
@@ -456,7 +456,7 @@ test("Proxied requests expose socket details to middleware", async (t) => {
   assert.equal(threaded.body, single.body);
 });
 
-test("Reloads with values that can't be cloned reach clients", async (t) => {
+test("Reloads with values that can't be cloned reach clients", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions());
   server.serve(0);
   let port = await server.getPort();
@@ -479,7 +479,7 @@ test("Reloads with values that can't be cloned reach clients", async (t) => {
   await server.close();
 });
 
-test("Event stream string writes reach the client before they end, in both modes", async (t) => {
+test("Event stream string writes reach the client before they end, in both modes", async () => {
   for(let serverThread of [true, false]) {
     let firstChunkReceived;
     let firstChunkPromise = new Promise((resolve) => firstChunkReceived = resolve);
@@ -516,7 +516,7 @@ test("Event stream string writes reach the client before they end, in both modes
   }
 });
 
-test("Encoded traversal to a sibling directory is refused in both modes", async (t) => {
+test("Encoded traversal to a sibling directory is refused in both modes", async () => {
   let { threaded, single } = await inBothModes({}, (server) => request(server, "/..%2fstubs-sibling%2fsecret.txt"));
 
   assert.equal(threaded.statusCode, 404);
@@ -531,7 +531,7 @@ async function requestThenSample(server, path) {
   return { failed, after };
 }
 
-test("A throwing middleware responds with 500 in both modes", async (t) => {
+test("A throwing middleware responds with 500 in both modes", async () => {
   let options = {
     middleware: [
       function(req, res, next) {
@@ -551,7 +551,7 @@ test("A throwing middleware responds with 500 in both modes", async (t) => {
   }
 });
 
-test("A rejection after an un-awaited next() responds with 500 in both modes", async (t) => {
+test("A rejection after an un-awaited next() responds with 500 in both modes", async () => {
   let options = {
     middleware: [
       async function(req, res, next) {
@@ -575,7 +575,7 @@ test("A rejection after an un-awaited next() responds with 500 in both modes", a
   }
 });
 
-test("An invalid onRequest return value responds with 500 in both modes", async (t) => {
+test("An invalid onRequest return value responds with 500 in both modes", async () => {
   let options = {
     onRequest: {
       "/bad": () => 42,
@@ -590,7 +590,7 @@ test("An invalid onRequest return value responds with 500 in both modes", async 
   }
 });
 
-test("Built-in 404 page in both modes", async (t) => {
+test("Built-in 404 page in both modes", async () => {
   let results = await inBothModes({}, (server) => request(server, "/missing&page"));
 
   for(let result of Object.values(results)) {
@@ -602,7 +602,7 @@ test("Built-in 404 page in both modes", async (t) => {
   }
 });
 
-test("Built-in 404 page has no body for HEAD requests in both modes", async (t) => {
+test("Built-in 404 page has no body for HEAD requests in both modes", async () => {
   let results = await inBothModes({}, (server) => sendRequest(server, "/missing", { method: "HEAD" }));
 
   for(let result of Object.values(results)) {
@@ -611,7 +611,7 @@ test("Built-in 404 page has no body for HEAD requests in both modes", async (t) 
   }
 });
 
-test("Middleware that sets a body without ending gets a 500 page in both modes", async (t) => {
+test("Middleware that sets a body without ending gets a 500 page in both modes", async () => {
   let options = {
     middleware: [
       function(req, res, next) {
@@ -645,7 +645,7 @@ async function inBothModesWithErrorPages(options, fn, dir = "./test/stubs-error-
   return results;
 }
 
-test("Custom 404.html in both modes", async (t) => {
+test("Custom 404.html in both modes", async () => {
   let results = await inBothModesWithErrorPages({}, (server) => request(server, "/missing"));
 
   for(let result of Object.values(results)) {
@@ -655,7 +655,7 @@ test("Custom 404.html in both modes", async (t) => {
   }
 });
 
-test("Custom 500.html for a throwing middleware in both modes", async (t) => {
+test("Custom 500.html for a throwing middleware in both modes", async () => {
   let options = {
     middleware: [
       function(req, res, next) {
@@ -673,7 +673,7 @@ test("Custom 500.html for a throwing middleware in both modes", async (t) => {
   }
 });
 
-test("Custom 500.html for a body that was never written in both modes", async (t) => {
+test("Custom 500.html for a body that was never written in both modes", async () => {
   let options = {
     middleware: [
       function(req, res, next) {
@@ -692,7 +692,7 @@ test("Custom 500.html for a body that was never written in both modes", async (t
   }
 });
 
-test("Built-in 500 page shows the error message in both modes", async (t) => {
+test("Built-in 500 page shows the error message in both modes", async () => {
   let options = {
     middleware: [
       function(req, res, next) {
@@ -709,14 +709,14 @@ test("Built-in 500 page shows the error message in both modes", async (t) => {
   }
 });
 
-test("Wrong-case URLs are a 404 in both modes", async (t) => {
+test("Wrong-case URLs are a 404 in both modes", async () => {
   let { threaded, single } = await inBothModes({}, (server) => request(server, "/SAMPLE"));
 
   assert.equal(threaded.statusCode, 404);
   assert.equal(single.statusCode, 404);
 });
 
-test("Injected scripts and live reload are served under pathPrefix in both modes", async (t) => {
+test("Injected scripts and live reload are served under pathPrefix in both modes", async () => {
   let results = await inBothModes({ pathPrefix: "/prefix/" }, async (server) => {
     let page = await request(server, "/prefix/sample");
     let client = await request(server, "/prefix/.ba/reload-client.js");
@@ -741,7 +741,7 @@ test("Injected scripts and live reload are served under pathPrefix in both modes
   }
 });
 
-test("Error pages load the reload client from a file, not inline, in both modes", async (t) => {
+test("Error pages load the reload client from a file, not inline, in both modes", async () => {
   let results = await inBothModes({}, (server) => request(server, "/missing"));
 
   for(let result of Object.values(results)) {
@@ -751,7 +751,7 @@ test("Error pages load the reload client from a file, not inline, in both modes"
   }
 });
 
-test("Middleware can proxy a request body to a backend in both modes", async (t) => {
+test("Middleware can proxy a request body to a backend in both modes", async () => {
   let backend = http.createServer((req, res) => {
     let chunks = [];
     req.on("data", (chunk) => chunks.push(chunk));

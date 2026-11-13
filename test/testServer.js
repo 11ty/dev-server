@@ -17,7 +17,7 @@ function testNormalizeFilePath(filepath) {
   return filepath.split("/").join(path.sep);
 }
 
-test("Url mappings for resource/index.html", async (t) => {
+test("Url mappings for resource/index.html", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions());
 
   assert.deepEqual(server.mapUrlToFilePath("/route1/"), {
@@ -42,7 +42,7 @@ test("Url mappings for resource/index.html", async (t) => {
   await server.close();
 });
 
-test("Url mappings for resource.html", async (t) => {
+test("Url mappings for resource.html", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions());
 
   assert.deepEqual(server.mapUrlToFilePath("/route2/"), {
@@ -67,7 +67,7 @@ test("Url mappings for resource.html", async (t) => {
   await server.close();
 });
 
-test("Url mappings for resource.html and resource/index.html", async (t) => {
+test("Url mappings for resource.html and resource/index.html", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions());
 
   // Production mismatch warning: Netlify 301 redirects to /route3 here
@@ -94,7 +94,7 @@ test("Url mappings for resource.html and resource/index.html", async (t) => {
   await server.close();
 });
 
-test("Url mappings for missing resource", async (t) => {
+test("Url mappings for missing resource", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions());
 
   // 404s
@@ -105,7 +105,7 @@ test("Url mappings for missing resource", async (t) => {
   await server.close();
 });
 
-test("Url mapping for a filename with a space in it", async (t) => {
+test("Url mapping for a filename with a space in it", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions());
 
   assert.deepEqual(server.mapUrlToFilePath("/route space.html"), {
@@ -116,7 +116,7 @@ test("Url mapping for a filename with a space in it", async (t) => {
   await server.close();
 });
 
-test("matchPassthroughAlias", async (t) => {
+test("matchPassthroughAlias", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions());
 
   // url => project root input
@@ -147,7 +147,7 @@ test("matchPassthroughAlias", async (t) => {
 });
 
 
-test("pathPrefix matching", async (t) => {
+test("pathPrefix matching", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions({
     pathPrefix: "/pathprefix/"
   }));
@@ -171,7 +171,7 @@ test("pathPrefix matching", async (t) => {
   await server.close();
 });
 
-test("pathPrefix without leading slash", async (t) => {
+test("pathPrefix without leading slash", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions({
     pathPrefix: "pathprefix/"
   }));
@@ -195,7 +195,7 @@ test("pathPrefix without leading slash", async (t) => {
   await server.close();
 });
 
-test("pathPrefix without trailing slash", async (t) => {
+test("pathPrefix without trailing slash", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions({
     pathPrefix: "/pathprefix"
   }));
@@ -219,7 +219,7 @@ test("pathPrefix without trailing slash", async (t) => {
   await server.close();
 });
 
-test("pathPrefix without leading or trailing slash", async (t) => {
+test("pathPrefix without leading or trailing slash", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions({
     pathPrefix: "pathprefix"
   }));
@@ -243,7 +243,7 @@ test("pathPrefix without leading or trailing slash", async (t) => {
   await server.close();
 });
 
-test("indexFileName option: serve custom index when provided", async (t) => {
+test("indexFileName option: serve custom index when provided", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions({ indexFileName: 'custom-index.html' }));
 
   assert.deepEqual(server.mapUrlToFilePath("/"), {
@@ -260,7 +260,7 @@ test("indexFileName option: serve custom index when provided", async (t) => {
   await server.close();
 });
 
-test("indexFileName option: return 404 when custom index file doesn't exist", async (t) => {
+test("indexFileName option: return 404 when custom index file doesn't exist", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions({ indexFileName: 'does-not-exist.html' }));
 
   assert.deepEqual(server.mapUrlToFilePath("/"), {
@@ -270,7 +270,7 @@ test("indexFileName option: return 404 when custom index file doesn't exist", as
   await server.close();
 });
 
-test("Test watch getter", async (t) => {
+test("Test watch getter", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions());
 
   assert.ok(server.watcher);
@@ -278,7 +278,7 @@ test("Test watch getter", async (t) => {
   await server.close();
 });
 
-test("Encoded traversal to a sibling directory is refused", async (t) => {
+test("Encoded traversal to a sibling directory is refused", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions());
 
   for(let url of [
@@ -298,7 +298,7 @@ test("Encoded traversal to a sibling directory is refused", async (t) => {
   await server.close();
 });
 
-test("isFileInDirectory doesn't match sibling directories that share a prefix", async (t) => {
+test("isFileInDirectory doesn't match sibling directories that share a prefix", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions());
 
   assert.ok(server.isFileInDirectory("test/stubs", "test/stubs/index.html"));
@@ -310,7 +310,7 @@ test("isFileInDirectory doesn't match sibling directories that share a prefix", 
   await server.close();
 });
 
-test("Custom error pages are limited to allowed status codes", async (t) => {
+test("Custom error pages are limited to allowed status codes", async () => {
   let { default: StaticFiles, CUSTOM_ERROR_PAGE_STATUSES } = await import("../server/staticFiles.js");
   let staticFiles = new StaticFiles("./test/stubs-error-pages/", { pathPrefix: "/", indexFileName: "index.html", aliases: {}, headers: {}, encoding: "utf-8", logger: { info() {}, log() {}, error() {} } });
 
@@ -340,7 +340,7 @@ test("Custom error pages are limited to allowed status codes", async (t) => {
   assert.ok(forbidden.body.includes("<pre>Built-in</pre>"));
 });
 
-test("Root requests don't pass an invalid path to fs.existsSync", async (t) => {
+test("Root requests don't pass an invalid path to fs.existsSync", async () => {
   let warnings = [];
   let onWarning = (warning) => warnings.push(warning.code);
   process.on("warning", onWarning);
@@ -357,7 +357,7 @@ test("Root requests don't pass an invalid path to fs.existsSync", async (t) => {
 // macOS and Windows usually have case-insensitive file systems; Linux doesn't
 const isCaseInsensitiveFileSystem = fs.existsSync("test/stubs/SAMPLE.html");
 
-test("URLs must match the case of files on disk", async (t) => {
+test("URLs must match the case of files on disk", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions());
 
   assert.equal(server.mapUrlToFilePath("/sample").statusCode, 200);
@@ -370,7 +370,7 @@ test("URLs must match the case of files on disk", async (t) => {
   await server.close();
 });
 
-test("Passthrough aliases must match the case of files on disk", async (t) => {
+test("Passthrough aliases must match the case of files on disk", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions());
   server.setAliases({ "/elsewhere": "./test/stubs/alternative" });
 
@@ -380,7 +380,7 @@ test("Passthrough aliases must match the case of files on disk", async (t) => {
   await server.close();
 });
 
-test("Passthrough aliases skip OS junk files but not other dotfiles", async (t) => {
+test("Passthrough aliases skip OS junk files but not other dotfiles", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions());
   server.setAliases({ "/junk/": "./test/stubs-passthrough-junk/" });
 
@@ -397,7 +397,7 @@ test("Passthrough aliases skip OS junk files but not other dotfiles", async (t) 
   await server.close();
 });
 
-test("Dotfiles are not served, except `/.well-known/`", async (t) => {
+test("Dotfiles are not served, except `/.well-known/`", async () => {
   let server = new DevServer("test-server", "./test/stubs-passthrough-junk/", getOptions());
 
   assert.deepEqual(server.mapUrlToFilePath("/.htaccess"), { statusCode: 404 });
@@ -410,7 +410,7 @@ test("Dotfiles are not served, except `/.well-known/`", async (t) => {
   await server.close();
 });
 
-test("Dotfiles are served with `dotfiles: true`", async (t) => {
+test("Dotfiles are served with `dotfiles: true`", async () => {
   let server = new DevServer("test-server", "./test/stubs-passthrough-junk/", getOptions({ dotfiles: true }));
   server.setAliases({ "/junk/": "./test/stubs-passthrough-junk/" });
 
@@ -421,7 +421,7 @@ test("Dotfiles are served with `dotfiles: true`", async (t) => {
   await server.close();
 });
 
-test("Passthrough aliases serve `/.well-known/`", async (t) => {
+test("Passthrough aliases serve `/.well-known/`", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions());
   server.setPassthroughCopies([{ url: "/.well-known/", inputPath: "./test/stubs-passthrough-junk/.well-known/" }]);
 
@@ -430,7 +430,7 @@ test("Passthrough aliases serve `/.well-known/`", async (t) => {
   await server.close();
 });
 
-test("Passthrough copies apply `dot` and `junk` like passthrough copy", async (t) => {
+test("Passthrough copies apply `dot` and `junk` like passthrough copy", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions());
   server.setPassthroughCopies([
     { url: "/junk/", inputPath: "./test/stubs-passthrough-junk/", dot: true, junk: true },
@@ -447,7 +447,7 @@ test("Passthrough copies apply `dot` and `junk` like passthrough copy", async (t
   await server.close();
 });
 
-test("`aliases` option entries serve OS junk files", async (t) => {
+test("`aliases` option entries serve OS junk files", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions({
     aliases: { "/junk/": "./test/stubs-passthrough-junk/" },
   }));
@@ -457,7 +457,7 @@ test("`aliases` option entries serve OS junk files", async (t) => {
   await server.close();
 });
 
-test("caseSensitive: false serves any case on case-insensitive file systems", async (t) => {
+test("caseSensitive: false serves any case on case-insensitive file systems", async () => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions({ caseSensitive: false }));
 
   assert.equal(server.mapUrlToFilePath("/SAMPLE").statusCode, isCaseInsensitiveFileSystem ? 200 : 404);

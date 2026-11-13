@@ -34,7 +34,7 @@ function isReachable(hostname, port) {
 for(let serverThread of [true, false]) {
   let mode = serverThread ? "threaded" : "single-threaded";
 
-  test(`Listens on 127.0.0.1 by default (${mode})`, async (t) => {
+  test(`Listens on 127.0.0.1 by default (${mode})`, async () => {
     let { server, port, hosts } = await startServer({ serverThread });
 
     assert.deepEqual(hosts, [`http://localhost:${port}/`]);
@@ -47,7 +47,7 @@ for(let serverThread of [true, false]) {
     await server.close();
   });
 
-  test(`host 0.0.0.0 with showAllHosts lists reachable network addresses (${mode})`, async (t) => {
+  test(`host 0.0.0.0 with showAllHosts lists reachable network addresses (${mode})`, async () => {
     let { server, port, hosts } = await startServer({ serverThread, host: "0.0.0.0", showAllHosts: true });
 
     assert.equal(hosts.at(-1), `http://localhost:${port}/`);
@@ -62,7 +62,7 @@ for(let serverThread of [true, false]) {
   });
 }
 
-test("showAllHosts alone doesn't allow network access or list network addresses", async (t) => {
+test("showAllHosts alone doesn't allow network access or list network addresses", async () => {
   let { server, port, hosts, messages } = await startServer({ showAllHosts: true });
 
   assert.deepEqual(hosts, [`http://localhost:${port}/`]);
@@ -74,7 +74,7 @@ test("showAllHosts alone doesn't allow network access or list network addresses"
   await server.close();
 });
 
-test("host 0.0.0.0 lists network addresses by default", async (t) => {
+test("host 0.0.0.0 lists network addresses by default", async () => {
   let { server, port, hosts } = await startServer({ host: "0.0.0.0" });
 
   assert.equal(hosts.at(-1), `http://localhost:${port}/`);
@@ -86,7 +86,7 @@ test("host 0.0.0.0 lists network addresses by default", async (t) => {
   await server.close();
 });
 
-test("host 0.0.0.0 with showAllHosts: false only lists localhost", async (t) => {
+test("host 0.0.0.0 with showAllHosts: false only lists localhost", async () => {
   let { server, port, hosts } = await startServer({ host: "0.0.0.0", showAllHosts: false });
 
   assert.deepEqual(hosts, [`http://localhost:${port}/`]);
@@ -115,7 +115,7 @@ test("A non-loopback host is listed instead of localhost", async (t) => {
 for(let serverThread of [true, false]) {
   let mode = serverThread ? "threaded" : "single-threaded";
 
-  test(`Moves to the next port when another server listens on every interface (${mode})`, async (t) => {
+  test(`Moves to the next port when another server listens on every interface (${mode})`, async () => {
     let blocker = http.createServer((req, res) => res.end("BLOCKER"));
     await new Promise((resolve) => blocker.listen(0, "::", resolve));
     let blockedPort = blocker.address().port;

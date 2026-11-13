@@ -7,7 +7,7 @@ import { isHostnameAllowed, isConnectionAllowed, normalizePath, getReloadForPage
 import { ReloadClient } from "../client/reload-client.js";
 import { openEventStream } from "./helpers/eventStream.js";
 
-test("isHostnameAllowed", (t) => {
+test("isHostnameAllowed", () => {
   assert.ok(isHostnameAllowed("localhost"));
   assert.ok(isHostnameAllowed("site.localhost"));
   assert.ok(isHostnameAllowed("127.0.0.1"));
@@ -24,7 +24,7 @@ test("isHostnameAllowed", (t) => {
   assert.ok(isHostnameAllowed("anything.example", true));
 });
 
-test("isConnectionAllowed", (t) => {
+test("isConnectionAllowed", () => {
   assert.ok(isConnectionAllowed({ origin: "http://localhost:8080", host: "localhost:8080" }));
   assert.ok(isConnectionAllowed({ origin: "http://[::1]:8080", host: "[::1]:8080" }));
   assert.ok(isConnectionAllowed({ host: "localhost:8080" }), "non-browser clients send no Origin");
@@ -82,13 +82,13 @@ function request(port, { method = "GET", path = "/.ba/events", headers = {}, bod
   });
 }
 
-test("normalizePath matches the client", (t) => {
+test("normalizePath matches the client", () => {
   for(let path of ["/", "/index.html", "/about", "/about/", "/about/index.html", "/caf%C3%A9/", "/café/", "/about.html"]) {
     assert.equal(normalizePath(path), ReloadClient.normalizePath(path));
   }
 });
 
-test("getReloadForPage keeps only this page’s templates", (t) => {
+test("getReloadForPage keeps only this page’s templates", () => {
   let obj = {
     type: "eleventy.reload",
     files: ["./about.njk"],
@@ -117,7 +117,7 @@ test("getReloadForPage keeps only this page’s templates", (t) => {
   assert.equal(obj.build.templates.length, 3);
 });
 
-test("EventStreamClient drops a client that stopped reading", (t) => {
+test("EventStreamClient drops a client that stopped reading", () => {
   let writes = [];
   let destroyed = false;
   let res = {
@@ -137,7 +137,7 @@ test("EventStreamClient drops a client that stopped reading", (t) => {
   assert.ok(destroyed);
 });
 
-test("PageBaselines adds the previous content to templates, then remembers the new content", (t) => {
+test("PageBaselines adds the previous content to templates, then remembers the new content", () => {
   let baselines = new PageBaselines();
   baselines.set("/about/index.html", "Served");
 
@@ -169,7 +169,7 @@ test("PageBaselines adds the previous content to templates, then remembers the n
 for(let serverThread of [true, false]) {
   let mode = serverThread ? "threaded" : "single-threaded";
 
-  test(`Live reload refuses connections from other origins (${mode})`, async (t) => {
+  test(`Live reload refuses connections from other origins (${mode})`, async () => {
     let server = getServer(serverThread);
     let port = await server.getPort();
 
@@ -185,7 +185,7 @@ for(let serverThread of [true, false]) {
     await server.close();
   });
 
-  test(`Live reload only accepts GET (${mode})`, async (t) => {
+  test(`Live reload only accepts GET (${mode})`, async () => {
     let server = getServer(serverThread);
     let port = await server.getPort();
 
@@ -197,7 +197,7 @@ for(let serverThread of [true, false]) {
     await server.close();
   });
 
-  test(`Reloads with build.outputs only send each tab its own templates (${mode})`, async (t) => {
+  test(`Reloads with build.outputs only send each tab its own templates (${mode})`, async () => {
     let server = getServer(serverThread);
     let port = await server.getPort();
 
@@ -234,7 +234,7 @@ for(let serverThread of [true, false]) {
     await server.close();
   });
 
-  test(`Reloads include the HTML the page was served, then the last content sent (${mode})`, async (t) => {
+  test(`Reloads include the HTML the page was served, then the last content sent (${mode})`, async () => {
     let server = getServer(serverThread);
     let port = await server.getPort();
 
@@ -261,7 +261,7 @@ for(let serverThread of [true, false]) {
     await server.close();
   });
 
-  test(`Reloads without build.outputs are broadcast unchanged (${mode})`, async (t) => {
+  test(`Reloads without build.outputs are broadcast unchanged (${mode})`, async () => {
     let server = getServer(serverThread);
     let port = await server.getPort();
 
@@ -289,7 +289,7 @@ for(let serverThread of [true, false]) {
     await server.close();
   });
 
-  test(`Closing the server ends open streams (${mode})`, async (t) => {
+  test(`Closing the server ends open streams (${mode})`, async () => {
     let server = getServer(serverThread);
     let port = await server.getPort();
 

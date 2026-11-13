@@ -55,7 +55,7 @@ class FakeWatcher extends EventEmitter {
   }
 }
 
-test("`watch` targets reload when `chokidar` is also passed", async (t) => {
+test("`watch` targets reload when `chokidar` is also passed", async () => {
   let dir = getTempDir();
   let file = path.join(dir, "style.css");
   fs.writeFileSync(file, "a {}");
@@ -78,7 +78,7 @@ test("`watch` targets reload when `chokidar` is also passed", async (t) => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test("Events from `chokidar` reload", async (t) => {
+test("Events from `chokidar` reload", async () => {
   let external = new FakeWatcher();
   let server = new DevServer("test-server", "./test/stubs/", getOptions({
     watch: [getTempDir()],
@@ -99,7 +99,7 @@ test("Events from `chokidar` reload", async (t) => {
   assert.ok(external.closed);
 });
 
-test("`chokidarOptions` apply to the server-owned watcher", async (t) => {
+test("`chokidarOptions` apply to the server-owned watcher", async () => {
   let external = chokidar.watch([]);
   let server = new DevServer("test-server", "./test/stubs/", getOptions({
     watch: [getTempDir()],
@@ -115,7 +115,7 @@ test("`chokidarOptions` apply to the server-owned watcher", async (t) => {
   await server.close();
 });
 
-test("`watchFiles` creates the server-owned watcher alongside `chokidar`", async (t) => {
+test("`watchFiles` creates the server-owned watcher alongside `chokidar`", async () => {
   let external = new FakeWatcher();
   let server = new DevServer("test-server", "./test/stubs/", getOptions({
     chokidar: external,
@@ -129,7 +129,7 @@ test("`watchFiles` creates the server-owned watcher alongside `chokidar`", async
   await server.close();
 });
 
-test("Glob targets in `watch` reload", async (t) => {
+test("Glob targets in `watch` reload", async () => {
   let dir = getTempDir();
   let file = path.join(dir, "style.css");
   fs.writeFileSync(file, "a {}");
