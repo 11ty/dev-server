@@ -20,5 +20,6 @@ jobs:
           # cache: npm
       - run: npm install
       - run: npm test
+      - run: npm run test:types
 env:
   YARN_GPG: no
