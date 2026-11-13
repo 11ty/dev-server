@@ -188,6 +188,7 @@ export default class DevServer {
 
   // `buildId` names the current content: new per process and per reload. Clients compare
   // it on reconnect to see if they missed a build—see client/reload-client.js
+  /** @type {string} */
   #buildId = crypto.randomUUID();
 
   /** @type {string} */
