@@ -511,6 +511,26 @@ test("Live reload buildId, sent on connect and bumped by each reload", async (t)
   await server.close();
 });
 
+test("Live reload uses a buildId passed to reload", async (t) => {
+  let server = new DevServer("test-server", "./test/stubs/", getOptions());
+  server.serve(0);
+
+  let port = await server.getPort();
+
+  let stream = await openEventStream(`http://localhost:${port}/.ba/events`);
+  await stream.next();
+
+  let reloadedPromise = stream.next();
+  server.reload({ buildId: "core-build-1", subtype: "css", files: [] });
+  let reloaded = await reloadedPromise;
+
+  t.is(reloaded.buildId, "core-build-1");
+  t.is(server.buildId, "core-build-1");
+
+  stream.close();
+  await server.close();
+});
+
 test("Live reload buildId is unique per server instance", async (t) => {
   let first = new DevServer("test-server", "./test/stubs/", getOptions());
   let second = new DevServer("test-server", "./test/stubs/", getOptions());

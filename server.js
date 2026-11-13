@@ -40,6 +40,7 @@ const debug = createDebug("Eleventy:DevServer");
  * @typedef {{ hosts: string[], localhostUrl: string, startupTime: number, version: string, options: Record<string, any> }} StartMessageData
  * @typedef {{ url: string, inputPath: string, outputPath?: string, content?: string }} BuildTemplate
  * @typedef {{
+ *   buildId?: string,
  *   files?: string[],
  *   subtype?: "css",
  *   build?: {
@@ -185,10 +186,9 @@ export default class DevServer {
   #proxyResponses = new Map();
   #baselines = new PageBaselines(); // unused in threaded mode, where pages are served on the server thread
 
-  // `buildId` names the current content: new per process, bumped per reload. Clients compare
+  // `buildId` names the current content: new per process and per reload. Clients compare
   // it on reconnect to see if they missed a build—see client/reload-client.js
-  #serverInstanceId = crypto.randomUUID();
-  #buildCount = 0;
+  #buildId = crypto.randomUUID();
 
   /** @type {string} */
   name;
@@ -261,7 +261,7 @@ export default class DevServer {
   }
 
   get buildId() {
-    return `${this.#serverInstanceId}:${this.#buildCount}`;
+    return this.#buildId;
   }
 
   /** @param {DevServerOptions} [options] */
@@ -1297,7 +1297,7 @@ export default class DevServer {
    * @param {ReloadEvent} [event]
    */
   reload(event = {}) {
-    let { subtype, files, build } = event;
+    let { buildId, subtype, files, build } = event;
     if (build?.templates && build.outputs && !this.options.domDiff) {
       // Send changed page URLs without content so the client can still skip reloading untouched pages
       build.templates = build.templates.map(({ url, inputPath, outputPath }) => ({ url, inputPath, outputPath }));
@@ -1319,7 +1319,8 @@ export default class DevServer {
         });
     }
 
-    this.#buildCount++;
+    // Eleventy passes its own build id; reloads from this server’s watcher get a new one
+    this.#buildId = buildId || crypto.randomUUID();
 
     // With `build.outputs`, each tab only gets the templates for its own page.
     this.sendUpdateNotification({
