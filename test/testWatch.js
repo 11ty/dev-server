@@ -2,7 +2,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { EventEmitter } from "node:events";
-import test from "ava";
+import test from "node:test";
+import assert from "node:assert/strict";
 import chokidar from "@11ty/chokidar-with-glob-support";
 import DevServer from "../server.js";
 
@@ -66,12 +67,12 @@ test("`watch` targets reload when `chokidar` is also passed", async (t) => {
     chokidarOptions: { awaitWriteFinish: false, usePolling: true, interval: 50 },
   }));
 
-  t.not(server.watcher, external);
-  t.deepEqual(external.added, []);
+  assert.notEqual(server.watcher, external);
+  assert.deepEqual(external.added, []);
 
   await waitForReady(server.watcher);
 
-  t.deepEqual(await writeUntilReloaded(server, file), [file]);
+  assert.deepEqual(await writeUntilReloaded(server, file), [file]);
 
   await server.close();
   fs.rmSync(dir, { recursive: true, force: true });
@@ -86,16 +87,16 @@ test("Events from `chokidar` reload", async (t) => {
 
   // Repeat calls do not double-register listeners
   server.getWatcher();
-  t.is(external.listenerCount("change"), 1);
+  assert.equal(external.listenerCount("change"), 1);
 
   for(let type of ["change", "add", "unlink"]) {
     let reloaded = waitForReload(server);
     external.emit(type, "_site/file.css");
-    t.deepEqual(await reloaded, ["_site/file.css"]);
+    assert.deepEqual(await reloaded, ["_site/file.css"]);
   }
 
   await server.close();
-  t.true(external.closed);
+  assert.ok(external.closed);
 });
 
 test("`chokidarOptions` apply to the server-owned watcher", async (t) => {
@@ -106,10 +107,10 @@ test("`chokidarOptions` apply to the server-owned watcher", async (t) => {
     chokidarOptions: { usePolling: true, interval: 42 },
   }));
 
-  t.is(server.watcher.options.usePolling, true);
-  t.is(server.watcher.options.interval, 42);
-  t.is(server.watcher.options.ignoreInitial, true);
-  t.not(external.options.interval, 42);
+  assert.equal(server.watcher.options.usePolling, true);
+  assert.equal(server.watcher.options.interval, 42);
+  assert.equal(server.watcher.options.ignoreInitial, true);
+  assert.notEqual(external.options.interval, 42);
 
   await server.close();
 });
@@ -122,8 +123,8 @@ test("`watchFiles` creates the server-owned watcher alongside `chokidar`", async
 
   server.watchFiles([getTempDir()]);
 
-  t.not(server.watcher, external);
-  t.deepEqual(external.added, []);
+  assert.notEqual(server.watcher, external);
+  assert.deepEqual(external.added, []);
 
   await server.close();
 });
@@ -142,7 +143,7 @@ test("Glob targets in `watch` reload", async (t) => {
   await waitForReady(server.watcher);
   fs.writeFileSync(path.join(dir, "ignored.txt"), "b");
 
-  t.deepEqual(await writeUntilReloaded(server, file), [file]);
+  assert.deepEqual(await writeUntilReloaded(server, file), [file]);
 
   await server.close();
   fs.rmSync(dir, { recursive: true, force: true });

@@ -1,4 +1,5 @@
-import test from "ava";
+import test from "node:test";
+import assert from "node:assert/strict";
 import http from "node:http";
 import DevServer from "../server.js";
 import ipAddress from "../server/ipAddress.js";
@@ -36,11 +37,11 @@ for(let serverThread of [true, false]) {
   test(`Listens on 127.0.0.1 by default (${mode})`, async (t) => {
     let { server, port, hosts } = await startServer({ serverThread });
 
-    t.deepEqual(hosts, [`http://localhost:${port}/`]);
-    t.true(await isReachable("127.0.0.1", port));
-    t.true(await isReachable("localhost", port));
+    assert.deepEqual(hosts, [`http://localhost:${port}/`]);
+    assert.ok(await isReachable("127.0.0.1", port));
+    assert.ok(await isReachable("localhost", port));
     if(lanAddress) {
-      t.false(await isReachable(lanAddress, port), "not reachable from the network");
+      assert.equal(await isReachable(lanAddress, port), false, "not reachable from the network");
     }
 
     await server.close();
@@ -49,12 +50,12 @@ for(let serverThread of [true, false]) {
   test(`host 0.0.0.0 with showAllHosts lists reachable network addresses (${mode})`, async (t) => {
     let { server, port, hosts } = await startServer({ serverThread, host: "0.0.0.0", showAllHosts: true });
 
-    t.is(hosts.at(-1), `http://localhost:${port}/`);
+    assert.equal(hosts.at(-1), `http://localhost:${port}/`);
     for(let url of hosts) {
-      t.true(await isReachable(new URL(url).hostname, port), url);
+      assert.ok(await isReachable(new URL(url).hostname, port), url);
     }
     if(lanAddress) {
-      t.true(hosts.includes(`http://${lanAddress}:${port}/`));
+      assert.ok(hosts.includes(`http://${lanAddress}:${port}/`));
     }
 
     await server.close();
@@ -64,10 +65,10 @@ for(let serverThread of [true, false]) {
 test("showAllHosts alone doesn't allow network access or list network addresses", async (t) => {
   let { server, port, hosts, messages } = await startServer({ showAllHosts: true });
 
-  t.deepEqual(hosts, [`http://localhost:${port}/`]);
-  t.true(messages.some((message) => message.includes(`host: "0.0.0.0"`)), "logs a hint");
+  assert.deepEqual(hosts, [`http://localhost:${port}/`]);
+  assert.ok(messages.some((message) => message.includes(`host: "0.0.0.0"`)), "logs a hint");
   if(lanAddress) {
-    t.false(await isReachable(lanAddress, port));
+    assert.equal(await isReachable(lanAddress, port), false);
   }
 
   await server.close();
@@ -76,10 +77,10 @@ test("showAllHosts alone doesn't allow network access or list network addresses"
 test("host 0.0.0.0 lists network addresses by default", async (t) => {
   let { server, port, hosts } = await startServer({ host: "0.0.0.0" });
 
-  t.is(hosts.at(-1), `http://localhost:${port}/`);
+  assert.equal(hosts.at(-1), `http://localhost:${port}/`);
   if(lanAddress) {
-    t.true(hosts.includes(`http://${lanAddress}:${port}/`));
-    t.true(await isReachable(lanAddress, port));
+    assert.ok(hosts.includes(`http://${lanAddress}:${port}/`));
+    assert.ok(await isReachable(lanAddress, port));
   }
 
   await server.close();
@@ -88,9 +89,9 @@ test("host 0.0.0.0 lists network addresses by default", async (t) => {
 test("host 0.0.0.0 with showAllHosts: false only lists localhost", async (t) => {
   let { server, port, hosts } = await startServer({ host: "0.0.0.0", showAllHosts: false });
 
-  t.deepEqual(hosts, [`http://localhost:${port}/`]);
+  assert.deepEqual(hosts, [`http://localhost:${port}/`]);
   if(lanAddress) {
-    t.true(await isReachable(lanAddress, port));
+    assert.ok(await isReachable(lanAddress, port));
   }
 
   await server.close();
@@ -98,15 +99,15 @@ test("host 0.0.0.0 with showAllHosts: false only lists localhost", async (t) => 
 
 test("A non-loopback host is listed instead of localhost", async (t) => {
   if(!lanAddress) {
-    t.pass("no network address on this machine");
+    t.skip("no network address on this machine");
     return;
   }
 
   let { server, port, hosts } = await startServer({ host: lanAddress });
 
-  t.deepEqual(hosts, [`http://${lanAddress}:${port}/`]);
-  t.true(await isReachable(lanAddress, port));
-  t.false(await isReachable("127.0.0.1", port));
+  assert.deepEqual(hosts, [`http://${lanAddress}:${port}/`]);
+  assert.ok(await isReachable(lanAddress, port));
+  assert.equal(await isReachable("127.0.0.1", port), false);
 
   await server.close();
 });
@@ -127,8 +128,8 @@ for(let serverThread of [true, false]) {
     server.serve(blockedPort);
     let port = await server.getPort();
 
-    t.not(port, blockedPort);
-    t.true(await isReachable("127.0.0.1", port));
+    assert.notEqual(port, blockedPort);
+    assert.ok(await isReachable("127.0.0.1", port));
 
     await server.close();
     await new Promise((resolve) => blocker.close(resolve));

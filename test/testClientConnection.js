@@ -1,5 +1,6 @@
 import fs from "node:fs";
-import test from "ava";
+import test from "node:test";
+import assert from "node:assert/strict";
 import http from "node:http";
 import DevServer from "../server.js";
 import { isHostnameAllowed, isConnectionAllowed, normalizePath, getReloadForPage, EventStreamClient, PageBaselines } from "../server/clientConnection.js";
@@ -7,38 +8,38 @@ import { ReloadClient } from "../client/reload-client.js";
 import { openEventStream } from "./helpers/eventStream.js";
 
 test("isHostnameAllowed", (t) => {
-  t.true(isHostnameAllowed("localhost"));
-  t.true(isHostnameAllowed("site.localhost"));
-  t.true(isHostnameAllowed("127.0.0.1"));
-  t.true(isHostnameAllowed("192.168.1.20"));
-  t.true(isHostnameAllowed("::1"));
-  t.false(isHostnameAllowed("evil.example"));
-  t.false(isHostnameAllowed(undefined));
+  assert.ok(isHostnameAllowed("localhost"));
+  assert.ok(isHostnameAllowed("site.localhost"));
+  assert.ok(isHostnameAllowed("127.0.0.1"));
+  assert.ok(isHostnameAllowed("192.168.1.20"));
+  assert.ok(isHostnameAllowed("::1"));
+  assert.equal(isHostnameAllowed("evil.example"), false);
+  assert.equal(isHostnameAllowed(undefined), false);
 
-  t.true(isHostnameAllowed("mysite.test", ["mysite.test"]));
-  t.false(isHostnameAllowed("www.mysite.test", ["mysite.test"]));
-  t.true(isHostnameAllowed("www.mysite.test", [".mysite.test"]));
-  t.true(isHostnameAllowed("mysite.test", [".mysite.test"]));
-  t.false(isHostnameAllowed("notmysite.test", [".mysite.test"]));
-  t.true(isHostnameAllowed("anything.example", true));
+  assert.ok(isHostnameAllowed("mysite.test", ["mysite.test"]));
+  assert.equal(isHostnameAllowed("www.mysite.test", ["mysite.test"]), false);
+  assert.ok(isHostnameAllowed("www.mysite.test", [".mysite.test"]));
+  assert.ok(isHostnameAllowed("mysite.test", [".mysite.test"]));
+  assert.equal(isHostnameAllowed("notmysite.test", [".mysite.test"]), false);
+  assert.ok(isHostnameAllowed("anything.example", true));
 });
 
 test("isConnectionAllowed", (t) => {
-  t.true(isConnectionAllowed({ origin: "http://localhost:8080", host: "localhost:8080" }));
-  t.true(isConnectionAllowed({ origin: "http://[::1]:8080", host: "[::1]:8080" }));
-  t.true(isConnectionAllowed({ host: "localhost:8080" }), "non-browser clients send no Origin");
+  assert.ok(isConnectionAllowed({ origin: "http://localhost:8080", host: "localhost:8080" }));
+  assert.ok(isConnectionAllowed({ origin: "http://[::1]:8080", host: "[::1]:8080" }));
+  assert.ok(isConnectionAllowed({ host: "localhost:8080" }), "non-browser clients send no Origin");
 
   // Other sites
-  t.false(isConnectionAllowed({ origin: "https://evil.example", host: "localhost:8080" }));
-  t.false(isConnectionAllowed({ origin: "null", host: "localhost:8080" }));
+  assert.equal(isConnectionAllowed({ origin: "https://evil.example", host: "localhost:8080" }), false);
+  assert.equal(isConnectionAllowed({ origin: "null", host: "localhost:8080" }), false);
 
   // DNS rebinding: same origin, but a domain name that isn't allowed
-  t.false(isConnectionAllowed({ origin: "http://evil.example:8080", host: "evil.example:8080" }));
-  t.true(isConnectionAllowed({ origin: "http://mysite.test", host: "mysite.test" }, ["mysite.test"]));
+  assert.equal(isConnectionAllowed({ origin: "http://evil.example:8080", host: "evil.example:8080" }), false);
+  assert.ok(isConnectionAllowed({ origin: "http://mysite.test", host: "mysite.test" }, ["mysite.test"]));
 
   // `true` skips the Host check, but not the Origin check
-  t.true(isConnectionAllowed({ origin: "http://evil.example", host: "evil.example" }, true));
-  t.false(isConnectionAllowed({ origin: "https://evil.example", host: "localhost:8080" }, true));
+  assert.ok(isConnectionAllowed({ origin: "http://evil.example", host: "evil.example" }, true));
+  assert.equal(isConnectionAllowed({ origin: "https://evil.example", host: "localhost:8080" }, true), false);
 });
 
 function getServer(serverThread, options = {}) {
@@ -83,7 +84,7 @@ function request(port, { method = "GET", path = "/.ba/events", headers = {}, bod
 
 test("normalizePath matches the client", (t) => {
   for(let path of ["/", "/index.html", "/about", "/about/", "/about/index.html", "/caf%C3%A9/", "/café/", "/about.html"]) {
-    t.is(normalizePath(path), ReloadClient.normalizePath(path));
+    assert.equal(normalizePath(path), ReloadClient.normalizePath(path));
   }
 });
 
@@ -106,14 +107,14 @@ test("getReloadForPage keeps only this page’s templates", (t) => {
   };
 
   let about = getReloadForPage(obj, "/about");
-  t.deepEqual(about.build.templates, [{ url: "/about/", content: "About" }]);
-  t.deepEqual({ ...about.build, templates: undefined }, { ...obj.build, templates: undefined });
-  t.is(about.files, obj.files);
-  t.is(about.buildId, "b1");
+  assert.deepEqual(about.build.templates, [{ url: "/about/", content: "About" }]);
+  assert.deepEqual({ ...about.build, templates: undefined }, { ...obj.build, templates: undefined });
+  assert.equal(about.files, obj.files);
+  assert.equal(about.buildId, "b1");
 
-  t.deepEqual(getReloadForPage(obj, "/missing").build.templates, []);
-  t.deepEqual(getReloadForPage(obj, undefined).build.templates, []);
-  t.is(obj.build.templates.length, 3);
+  assert.deepEqual(getReloadForPage(obj, "/missing").build.templates, []);
+  assert.deepEqual(getReloadForPage(obj, undefined).build.templates, []);
+  assert.equal(obj.build.templates.length, 3);
 });
 
 test("EventStreamClient drops a client that stopped reading", (t) => {
@@ -128,12 +129,12 @@ test("EventStreamClient drops a client that stopped reading", (t) => {
   let client = new EventStreamClient(res);
 
   client.send(`{"a":1}`, "b1");
-  t.deepEqual(writes, [`id: b1\ndata: {"a":1}\n\n`]);
+  assert.deepEqual(writes, [`id: b1\ndata: {"a":1}\n\n`]);
 
   res.writableLength = 3 * 1024 * 1024;
   client.send(`{"a":2}`);
-  t.is(writes.length, 1);
-  t.true(destroyed);
+  assert.equal(writes.length, 1);
+  assert.ok(destroyed);
 });
 
 test("PageBaselines adds the previous content to templates, then remembers the new content", (t) => {
@@ -153,16 +154,16 @@ test("PageBaselines adds the previous content to templates, then remembers the n
   });
 
   let first = reload("About v2").build.templates;
-  t.is(first[0].previousContent, "Served");
-  t.false("previousContent" in first[1]);
-  t.false("previousContent" in first[2]);
+  assert.equal(first[0].previousContent, "Served");
+  assert.equal("previousContent" in first[1], false);
+  assert.equal("previousContent" in first[2], false);
 
   let second = reload("About v3").build.templates;
-  t.is(second[0].previousContent, "About v2");
-  t.is(second[1].previousContent, "New");
+  assert.equal(second[0].previousContent, "About v2");
+  assert.equal(second[1].previousContent, "New");
 
   let notReload = { type: "eleventy.msg", message: "Hi" };
-  t.is(baselines.apply(notReload), notReload);
+  assert.equal(baselines.apply(notReload), notReload);
 });
 
 for(let serverThread of [true, false]) {
@@ -173,13 +174,13 @@ for(let serverThread of [true, false]) {
     let port = await server.getPort();
 
     let other = await request(port, { headers: { Origin: "https://evil.example" } });
-    t.is(other.statusCode, 403);
+    assert.equal(other.statusCode, 403);
 
     let rebound = await request(port, { headers: { Origin: `http://evil.example:${port}`, Host: `evil.example:${port}` } });
-    t.is(rebound.statusCode, 403);
+    assert.equal(rebound.statusCode, 403);
 
     let same = await request(port, { headers: { Origin: `http://localhost:${port}` } });
-    t.is(same.statusCode, 200);
+    assert.equal(same.statusCode, 200);
 
     await server.close();
   });
@@ -190,7 +191,7 @@ for(let serverThread of [true, false]) {
 
     for(let method of ["POST", "PUT"]) {
       let res = await request(port, { method, headers: { "Content-Type": "application/json", Origin: `http://localhost:${port}` }, body: "{}" });
-      t.is(res.statusCode, 405);
+      assert.equal(res.statusCode, 405);
     }
 
     await server.close();
@@ -219,13 +220,13 @@ for(let serverThread of [true, false]) {
     });
 
     let [homeReload, aboutReload, otherReload] = await reloads;
-    t.deepEqual(homeReload.build.templates.map(({ content }) => content), ["Home"]);
-    t.deepEqual(aboutReload.build.templates.map(({ content }) => content), ["About"]);
-    t.deepEqual(otherReload.build.templates, []);
-    t.deepEqual(otherReload.files, ["./_data/site.json"]);
-    t.true(otherReload.build.outputs);
-    t.is(otherReload.buildId, homeReload.buildId);
-    t.is(homeReload.eventId, homeReload.buildId);
+    assert.deepEqual(homeReload.build.templates.map(({ content }) => content), ["Home"]);
+    assert.deepEqual(aboutReload.build.templates.map(({ content }) => content), ["About"]);
+    assert.deepEqual(otherReload.build.templates, []);
+    assert.deepEqual(otherReload.files, ["./_data/site.json"]);
+    assert.ok(otherReload.build.outputs);
+    assert.equal(otherReload.buildId, homeReload.buildId);
+    assert.equal(homeReload.eventId, homeReload.buildId);
 
     for(let stream of [home, about, other]) {
       stream.close();
@@ -238,7 +239,7 @@ for(let serverThread of [true, false]) {
     let port = await server.getPort();
 
     let served = (await request(port, { path: "/" })).body;
-    t.true(served.includes("reload-client.js"));
+    assert.ok(served.includes("reload-client.js"));
 
     let home = await connectPage(port, "/");
     let reload = (content) => {
@@ -251,10 +252,10 @@ for(let serverThread of [true, false]) {
     };
 
     let [first] = (await reload("Home v2")).build.templates;
-    t.is(first.previousContent, fs.readFileSync("./test/stubs/index.html", "utf8"));
+    assert.equal(first.previousContent, fs.readFileSync("./test/stubs/index.html", "utf8"));
 
     let [second] = (await reload("Home v3")).build.templates;
-    t.is(second.previousContent, "Home v2");
+    assert.equal(second.previousContent, "Home v2");
 
     home.close();
     await server.close();
@@ -279,8 +280,8 @@ for(let serverThread of [true, false]) {
     });
 
     for(let reload of await reloads) {
-      t.deepEqual(reload.build.templates.map(({ url }) => url), ["/", "/about/"]);
-      t.is(reload.eventId, reload.buildId);
+      assert.deepEqual(reload.build.templates.map(({ url }) => url), ["/", "/about/"]);
+      assert.equal(reload.eventId, reload.buildId);
     }
 
     home.close();
@@ -293,7 +294,7 @@ for(let serverThread of [true, false]) {
     let port = await server.getPort();
 
     let stream = await connectPage(port, "/");
-    t.is(stream.status.eventId, stream.status.buildId);
+    assert.equal(stream.status.eventId, stream.status.buildId);
 
     let rest = (async () => {
       let messages = [];
@@ -306,6 +307,6 @@ for(let serverThread of [true, false]) {
 
     await server.close();
     let messages = await rest;
-    t.deepEqual(messages.map(({ status }) => status), ["disconnected"]);
+    assert.deepEqual(messages.map(({ status }) => status), ["disconnected"]);
   });
 }

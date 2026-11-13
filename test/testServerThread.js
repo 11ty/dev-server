@@ -1,4 +1,5 @@
-import test from "ava";
+import test from "node:test";
+import assert from "node:assert/strict";
 import http from "http";
 import { Worker } from "node:worker_threads";
 import DevServer from "../server.js";
@@ -52,41 +53,41 @@ async function inBothModes(options, fn) {
 
 test("serverThread is on by default", async (t) => {
   let server = new DevServer("test-server", "./test/stubs/", getOptions());
-  t.true(server.isThreaded);
+  assert.ok(server.isThreaded);
   await server.close();
 
   let optOut = new DevServer("test-server", "./test/stubs/", getOptions({ serverThread: false }));
-  t.false(optOut.isThreaded);
+  assert.equal(optOut.isThreaded, false);
   await optOut.close();
 });
 
 test("Static file responses match in both modes", async (t) => {
   let { threaded, single } = await inBothModes({}, (server) => request(server, "/sample"));
 
-  t.true(threaded.body.startsWith("SAMPLE"));
-  t.true(threaded.body.includes("<script "));
-  t.is(threaded.statusCode, 200);
-  t.is(threaded.body, single.body);
-  t.is(threaded.headers["content-type"], single.headers["content-type"]);
+  assert.ok(threaded.body.startsWith("SAMPLE"));
+  assert.ok(threaded.body.includes("<script "));
+  assert.equal(threaded.statusCode, 200);
+  assert.equal(threaded.body, single.body);
+  assert.equal(threaded.headers["content-type"], single.headers["content-type"]);
 });
 
 test("404 responses match in both modes", async (t) => {
   let { threaded, single } = await inBothModes({}, (server) => request(server, "/this-does-not-exist"));
 
-  t.is(threaded.statusCode, 404);
-  t.is(single.statusCode, 404);
+  assert.equal(threaded.statusCode, 404);
+  assert.equal(single.statusCode, 404);
   // the reload client is injected into error pages too
-  t.true(threaded.body.includes("<script "));
-  t.is(threaded.body, single.body);
+  assert.ok(threaded.body.includes("<script "));
+  assert.equal(threaded.body, single.body);
 });
 
 test("Redirects match in both modes", async (t) => {
   let { threaded, single } = await inBothModes({}, (server) => request(server, "/route1"));
 
-  t.is(threaded.statusCode, 301);
-  t.is(threaded.headers.location, "/route1/");
-  t.is(single.statusCode, threaded.statusCode);
-  t.is(single.headers.location, threaded.headers.location);
+  assert.equal(threaded.statusCode, 301);
+  assert.equal(threaded.headers.location, "/route1/");
+  assert.equal(single.statusCode, threaded.statusCode);
+  assert.equal(single.headers.location, threaded.headers.location);
 });
 
 test("onRequest is proxied to the main thread", async (t) => {
@@ -103,10 +104,10 @@ test("onRequest is proxied to the main thread", async (t) => {
 
   let { threaded, single } = await inBothModes(options, (server) => request(server, "/dynamic/zach"));
 
-  t.true(threaded.body.startsWith("DYNAMIC:zach"));
+  assert.ok(threaded.body.startsWith("DYNAMIC:zach"));
   // onRequest HTML still gets the live reload client injected
-  t.true(threaded.body.includes("<script "));
-  t.is(threaded.body, single.body);
+  assert.ok(threaded.body.includes("<script "));
+  assert.equal(threaded.body, single.body);
 });
 
 test("onRequest returning nothing falls through to static files", async (t) => {
@@ -118,8 +119,8 @@ test("onRequest returning nothing falls through to static files", async (t) => {
 
   let { threaded, single } = await inBothModes(options, (server) => request(server, "/sample"));
 
-  t.true(threaded.body.startsWith("SAMPLE"));
-  t.is(threaded.body, single.body);
+  assert.ok(threaded.body.startsWith("SAMPLE"));
+  assert.equal(threaded.body, single.body);
 });
 
 test("Middleware that ends the response is proxied", async (t) => {
@@ -135,9 +136,9 @@ test("Middleware that ends the response is proxied", async (t) => {
 
   let { threaded, single } = await inBothModes(options, (server) => request(server, "/sample"));
 
-  t.true(threaded.body.startsWith("FROM-MIDDLEWARE"));
-  t.true(threaded.body.includes("<script "));
-  t.is(threaded.body, single.body);
+  assert.ok(threaded.body.startsWith("FROM-MIDDLEWARE"));
+  assert.ok(threaded.body.includes("<script "));
+  assert.equal(threaded.body, single.body);
 });
 
 test("Middleware headers survive fallthrough to the server thread", async (t) => {
@@ -154,10 +155,10 @@ test("Middleware headers survive fallthrough to the server thread", async (t) =>
 
   // the middleware fell through, so the file is served by the server thread,
   // but the header the middleware set must still be present
-  t.is(threaded.headers["x-from-middleware"], "yes");
-  t.true(threaded.body.startsWith("SAMPLE"));
-  t.is(threaded.headers["x-from-middleware"], single.headers["x-from-middleware"]);
-  t.is(threaded.body, single.body);
+  assert.equal(threaded.headers["x-from-middleware"], "yes");
+  assert.ok(threaded.body.startsWith("SAMPLE"));
+  assert.equal(threaded.headers["x-from-middleware"], single.headers["x-from-middleware"]);
+  assert.equal(threaded.body, single.body);
 });
 
 test("`dotfiles` option reaches the server thread", async (t) => {
@@ -165,10 +166,10 @@ test("`dotfiles` option reaches the server thread", async (t) => {
   let hidden = await inBothModes({ aliases }, (server) => request(server, "/junk/.htaccess"));
   let shown = await inBothModes({ aliases, dotfiles: true }, (server) => request(server, "/junk/.htaccess"));
 
-  t.is(hidden.threaded.statusCode, 404);
-  t.is(hidden.single.statusCode, 404);
-  t.is(shown.threaded.statusCode, 200);
-  t.is(shown.single.statusCode, 200);
+  assert.equal(hidden.threaded.statusCode, 404);
+  assert.equal(hidden.single.statusCode, 404);
+  assert.equal(shown.threaded.statusCode, 200);
+  assert.equal(shown.single.statusCode, 200);
 });
 
 test("Aliases set before serve() reach the server thread", async (t) => {
@@ -181,8 +182,8 @@ test("Aliases set before serve() reach the server thread", async (t) => {
     await server.close();
   }
 
-  t.true(results.threaded.body.startsWith("SAMPLE"));
-  t.is(results.threaded.body, results.single.body);
+  assert.ok(results.threaded.body.startsWith("SAMPLE"));
+  assert.equal(results.threaded.body, results.single.body);
 });
 
 test("Passthrough copies reach the server thread", async (t) => {
@@ -203,10 +204,10 @@ test("Passthrough copies reach the server thread", async (t) => {
     await server.close();
   }
 
-  t.is(results.threaded.junk.statusCode, 200);
-  t.is(results.threaded.noJunk.statusCode, 404);
-  t.is(results.threaded.junk.statusCode, results.single.junk.statusCode);
-  t.is(results.threaded.noJunk.statusCode, results.single.noJunk.statusCode);
+  assert.equal(results.threaded.junk.statusCode, 200);
+  assert.equal(results.threaded.noJunk.statusCode, 404);
+  assert.equal(results.threaded.junk.statusCode, results.single.junk.statusCode);
+  assert.equal(results.threaded.noJunk.statusCode, results.single.noJunk.statusCode);
 });
 
 test("Injected scripts are served off the main thread", async (t) => {
@@ -217,14 +218,14 @@ test("Injected scripts are served off the main thread", async (t) => {
     };
   });
 
-  t.is(threaded.client.statusCode, 200);
-  t.is(threaded.idiomorph.statusCode, 200);
-  t.is(threaded.client.body, single.client.body);
-  t.is(threaded.idiomorph.body, single.idiomorph.body);
+  assert.equal(threaded.client.statusCode, 200);
+  assert.equal(threaded.idiomorph.statusCode, 200);
+  assert.equal(threaded.client.body, single.client.body);
+  assert.equal(threaded.idiomorph.body, single.idiomorph.body);
 });
 
 // Serial: blocking the main thread would stall other tests in this file running at the same time
-test.serial("Requests are served while the main thread is blocked", async (t) => {
+test("Requests are served while the main thread is blocked", async (t) => {
   // The probe has to run off the main thread, otherwise it would be blocked
   // alongside the server and the test would pass no matter what.
   const PROBE = `
@@ -273,10 +274,10 @@ parentPort.postMessage({ max, count });
 
   // Control: without the server thread, a request must wait out the whole block.
   // This is what keeps the assertion below honest.
-  t.true(single >= BLOCK_MS / 2, `expected single-threaded to stall, worst request took ${single}ms`);
+  assert.ok(single >= BLOCK_MS / 2, `expected single-threaded to stall, worst request took ${single}ms`);
 
   // With the server thread, requests are answered during the block.
-  t.true(threaded < BLOCK_MS / 4, `expected fast responses during the block, worst request took ${threaded}ms`);
+  assert.ok(threaded < BLOCK_MS / 4, `expected fast responses during the block, worst request took ${threaded}ms`);
 });
 
 async function sendRequest(server, path, { method = "GET", body } = {}) {
@@ -315,8 +316,8 @@ test("Request bodies are proxied to middleware", async (t) => {
     return sendRequest(server, "/anything", { method: "POST", body: "hello=world" });
   });
 
-  t.is(threaded.body, "GOT:hello=world");
-  t.is(threaded.body, single.body);
+  assert.equal(threaded.body, "GOT:hello=world");
+  assert.equal(threaded.body, single.body);
 });
 
 test("A throwing middleware does not take down the server", async (t) => {
@@ -333,12 +334,12 @@ test("A throwing middleware does not take down the server", async (t) => {
   server.serve(0);
 
   let failed = await sendRequest(server, "/boom");
-  t.is(failed.statusCode, 500);
+  assert.equal(failed.statusCode, 500);
 
   // the server thread must survive and keep serving
   let after = await sendRequest(server, "/sample");
-  t.is(after.statusCode, 200);
-  t.true(after.body.startsWith("SAMPLE"));
+  assert.equal(after.statusCode, 200);
+  assert.ok(after.body.startsWith("SAMPLE"));
 
   await server.close();
 });
@@ -361,8 +362,8 @@ test("getPort() rejects when every port is in use", async (t) => {
   server.options.portReassignmentRetryCount = 0;
   server.serve(blocker.address().port);
 
-  await t.throwsAsync(withTimeout(server.getPort()), { message: /ports but they were all in use/ });
-  await t.throwsAsync(withTimeout(server.ready()));
+  await assert.rejects(withTimeout(server.getPort()), { message: /ports but they were all in use/ });
+  await assert.rejects(withTimeout(server.ready()));
 
   await server.close();
   await new Promise((resolve) => blocker.close(resolve));
@@ -374,7 +375,7 @@ test("getPort() rejects when the server thread fails to start", async (t) => {
   }));
   server.serve(0);
 
-  await t.throwsAsync(withTimeout(server.getPort()), { message: /exited unexpectedly/ });
+  await assert.rejects(withTimeout(server.getPort()), { message: /exited unexpectedly/ });
 
   await server.close();
 });
@@ -408,7 +409,7 @@ test("Streaming middleware responses reach the client before they end", async (t
     }).on("error", reject);
   }));
 
-  t.is(body, "firstsecond");
+  assert.equal(body, "firstsecond");
 
   await server.close();
 });
@@ -434,7 +435,7 @@ test("Proxied middleware sees the client disconnect", async (t) => {
   });
   request.on("error", () => {});
 
-  await t.notThrowsAsync(withTimeout(closedPromise));
+  await assert.doesNotReject(withTimeout(closedPromise));
 
   await server.close();
 });
@@ -451,8 +452,8 @@ test("Proxied requests expose socket details to middleware", async (t) => {
 
   let { threaded, single } = await inBothModes(options, (server) => request(server, "/socket"));
 
-  t.is(threaded.body, "true");
-  t.is(threaded.body, single.body);
+  assert.equal(threaded.body, "true");
+  assert.equal(threaded.body, single.body);
 });
 
 test("Reloads with values that can't be cloned reach clients", async (t) => {
@@ -471,8 +472,8 @@ test("Reloads with values that can't be cloned reach clients", async (t) => {
   });
 
   let reload = await withTimeout(stream.next("eleventy.reload"));
-  t.is(reload.build.templates[0].url, "/");
-  t.deepEqual(reload.build.templates[0].data, {});
+  assert.equal(reload.build.templates[0].url, "/");
+  assert.deepEqual(reload.build.templates[0].data, {});
 
   stream.close();
   await server.close();
@@ -509,7 +510,7 @@ test("Event stream string writes reach the client before they end, in both modes
       }).on("error", reject);
     }));
 
-    t.is(body, "data: first\n\ndata: second\n\n", `serverThread: ${serverThread}`);
+    assert.equal(body, "data: first\n\ndata: second\n\n", `serverThread: ${serverThread}`);
 
     await server.close();
   }
@@ -518,10 +519,10 @@ test("Event stream string writes reach the client before they end, in both modes
 test("Encoded traversal to a sibling directory is refused in both modes", async (t) => {
   let { threaded, single } = await inBothModes({}, (server) => request(server, "/..%2fstubs-sibling%2fsecret.txt"));
 
-  t.is(threaded.statusCode, 404);
-  t.is(single.statusCode, 404);
-  t.false(threaded.body.includes("SECRET"));
-  t.false(single.body.includes("SECRET"));
+  assert.equal(threaded.statusCode, 404);
+  assert.equal(single.statusCode, 404);
+  assert.equal(threaded.body.includes("SECRET"), false);
+  assert.equal(single.body.includes("SECRET"), false);
 });
 
 async function requestThenSample(server, path) {
@@ -545,8 +546,8 @@ test("A throwing middleware responds with 500 in both modes", async (t) => {
   let results = await inBothModes(options, (server) => requestThenSample(server, "/boom"));
 
   for(let { failed, after } of Object.values(results)) {
-    t.is(failed.statusCode, 500);
-    t.is(after.statusCode, 200);
+    assert.equal(failed.statusCode, 500);
+    assert.equal(after.statusCode, 200);
   }
 });
 
@@ -569,8 +570,8 @@ test("A rejection after an un-awaited next() responds with 500 in both modes", a
   let results = await inBothModes(options, (server) => requestThenSample(server, "/boom"));
 
   for(let { failed, after } of Object.values(results)) {
-    t.is(failed.statusCode, 500);
-    t.is(after.statusCode, 200);
+    assert.equal(failed.statusCode, 500);
+    assert.equal(after.statusCode, 200);
   }
 });
 
@@ -584,8 +585,8 @@ test("An invalid onRequest return value responds with 500 in both modes", async 
   let results = await inBothModes(options, (server) => requestThenSample(server, "/bad"));
 
   for(let { failed, after } of Object.values(results)) {
-    t.is(failed.statusCode, 500);
-    t.is(after.statusCode, 200);
+    assert.equal(failed.statusCode, 500);
+    assert.equal(after.statusCode, 200);
   }
 });
 
@@ -593,11 +594,11 @@ test("Built-in 404 page in both modes", async (t) => {
   let results = await inBothModes({}, (server) => request(server, "/missing&page"));
 
   for(let result of Object.values(results)) {
-    t.is(result.statusCode, 404);
-    t.is(result.headers["content-type"], "text/html; charset=utf-8");
-    t.is(result.headers["content-security-policy"], undefined);
-    t.true(result.body.includes("<pre>Cannot GET /missing&amp;page</pre>"));
-    t.true(result.body.includes("<script "));
+    assert.equal(result.statusCode, 404);
+    assert.equal(result.headers["content-type"], "text/html; charset=utf-8");
+    assert.equal(result.headers["content-security-policy"], undefined);
+    assert.ok(result.body.includes("<pre>Cannot GET /missing&amp;page</pre>"));
+    assert.ok(result.body.includes("<script "));
   }
 });
 
@@ -605,8 +606,8 @@ test("Built-in 404 page has no body for HEAD requests in both modes", async (t) 
   let results = await inBothModes({}, (server) => sendRequest(server, "/missing", { method: "HEAD" }));
 
   for(let result of Object.values(results)) {
-    t.is(result.statusCode, 404);
-    t.is(result.body, "");
+    assert.equal(result.statusCode, 404);
+    assert.equal(result.body, "");
   }
 });
 
@@ -623,8 +624,8 @@ test("Middleware that sets a body without ending gets a 500 page in both modes",
   let results = await inBothModes(options, (server) => request(server, "/missing"));
 
   for(let result of Object.values(results)) {
-    t.is(result.statusCode, 500);
-    t.true(result.body.includes("A response was never written to the stream."));
+    assert.equal(result.statusCode, 500);
+    assert.ok(result.body.includes("A response was never written to the stream."));
   }
 });
 
@@ -648,9 +649,9 @@ test("Custom 404.html in both modes", async (t) => {
   let results = await inBothModesWithErrorPages({}, (server) => request(server, "/missing"));
 
   for(let result of Object.values(results)) {
-    t.is(result.statusCode, 404);
-    t.true(result.body.includes("CUSTOM-404"));
-    t.true(result.body.includes("<script "));
+    assert.equal(result.statusCode, 404);
+    assert.ok(result.body.includes("CUSTOM-404"));
+    assert.ok(result.body.includes("<script "));
   }
 });
 
@@ -666,9 +667,9 @@ test("Custom 500.html for a throwing middleware in both modes", async (t) => {
   let results = await inBothModesWithErrorPages(options, (server) => request(server, "/sample"));
 
   for(let result of Object.values(results)) {
-    t.is(result.statusCode, 500);
-    t.true(result.body.includes("CUSTOM-500"));
-    t.true(result.body.includes("<script "));
+    assert.equal(result.statusCode, 500);
+    assert.ok(result.body.includes("CUSTOM-500"));
+    assert.ok(result.body.includes("<script "));
   }
 });
 
@@ -686,8 +687,8 @@ test("Custom 500.html for a body that was never written in both modes", async (t
   let results = await inBothModesWithErrorPages(options, (server) => request(server, "/missing"), "./test/stubs-500-only/");
 
   for(let result of Object.values(results)) {
-    t.is(result.statusCode, 500);
-    t.true(result.body.includes("CUSTOM-500"));
+    assert.equal(result.statusCode, 500);
+    assert.ok(result.body.includes("CUSTOM-500"));
   }
 });
 
@@ -703,16 +704,16 @@ test("Built-in 500 page shows the error message in both modes", async (t) => {
   let results = await inBothModes(options, (server) => request(server, "/sample"));
 
   for(let result of Object.values(results)) {
-    t.is(result.statusCode, 500);
-    t.true(result.body.includes("<pre>middleware &lt;exploded&gt;</pre>"));
+    assert.equal(result.statusCode, 500);
+    assert.ok(result.body.includes("<pre>middleware &lt;exploded&gt;</pre>"));
   }
 });
 
 test("Wrong-case URLs are a 404 in both modes", async (t) => {
   let { threaded, single } = await inBothModes({}, (server) => request(server, "/SAMPLE"));
 
-  t.is(threaded.statusCode, 404);
-  t.is(single.statusCode, 404);
+  assert.equal(threaded.statusCode, 404);
+  assert.equal(single.statusCode, 404);
 });
 
 test("Injected scripts and live reload are served under pathPrefix in both modes", async (t) => {
@@ -731,12 +732,12 @@ test("Injected scripts and live reload are served under pathPrefix in both modes
   });
 
   for(let { page, client, legacyClient, idiomorph, opened } of Object.values(results)) {
-    t.true(page.body.includes(`src="/prefix/.ba/reload-client.js"`));
-    t.is(client.statusCode, 200);
-    t.true(client.body.includes("class ReloadClient"));
-    t.is(legacyClient.statusCode, 200);
-    t.is(idiomorph.statusCode, 200);
-    t.true(opened);
+    assert.ok(page.body.includes(`src="/prefix/.ba/reload-client.js"`));
+    assert.equal(client.statusCode, 200);
+    assert.ok(client.body.includes("class ReloadClient"));
+    assert.equal(legacyClient.statusCode, 200);
+    assert.equal(idiomorph.statusCode, 200);
+    assert.ok(opened);
   }
 });
 
@@ -744,9 +745,9 @@ test("Error pages load the reload client from a file, not inline, in both modes"
   let results = await inBothModes({}, (server) => request(server, "/missing"));
 
   for(let result of Object.values(results)) {
-    t.is(result.statusCode, 404);
-    t.true(result.body.includes(`src="/.ba/reload-client.js"`));
-    t.false(result.body.includes("class ReloadClient"));
+    assert.equal(result.statusCode, 404);
+    assert.ok(result.body.includes(`src="/.ba/reload-client.js"`));
+    assert.equal(result.body.includes("class ReloadClient"), false);
   }
 });
 
@@ -781,6 +782,6 @@ test("Middleware can proxy a request body to a backend in both modes", async (t)
   await new Promise((resolve) => backend.close(resolve));
 
   for(let result of Object.values(results)) {
-    t.is(result.body, "BACKEND:POST:name=Zach");
+    assert.equal(result.body, "BACKEND:POST:name=Zach");
   }
 });

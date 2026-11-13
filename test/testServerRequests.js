@@ -1,4 +1,5 @@
-import test from "ava";
+import test from "node:test";
+import assert from "node:assert/strict";
 import http from "http";
 import DevServer from "../server.js";
 import { openEventStream } from "./helpers/eventStream.js";
@@ -42,7 +43,7 @@ async function makeRequestTo(t, server, path, extras = {}) {
       let rawData = '';
       res.on('data', (chunk) => { rawData += chunk; });
       res.on('end', () => {
-        t.true( true );
+        assert.ok( true );
         resolve(rawData);
       });
     }).on('error', reject);
@@ -79,8 +80,8 @@ test("Standard request", async (t) => {
   server.serve(0);
 
   let data = await makeRequestTo(t, server, "/sample");
-  t.true(data.includes("<script "));
-  t.true(data.startsWith("SAMPLE"));
+  assert.ok(data.includes("<script "));
+  assert.ok(data.startsWith("SAMPLE"));
 
   await server.close();  
 });
@@ -97,8 +98,8 @@ test("One sync middleware", async t => {
   server.serve(0);
 
   let data = await makeRequestTo(t, server, "/sample");
-  t.true(data.includes("<script "));
-  t.true(data.startsWith("SAMPLE"));
+  assert.ok(data.includes("<script "));
+  assert.ok(data.startsWith("SAMPLE"));
 
   await server.close();
 });
@@ -117,8 +118,8 @@ test("Two sync middleware", async t => {
   server.serve(0);
 
   let data = await makeRequestTo(t, server, "/sample");
-  t.true(data.includes("<script "));
-  t.true(data.startsWith("SAMPLE"));
+  assert.ok(data.includes("<script "));
+  assert.ok(data.startsWith("SAMPLE"));
 
   await server.close();
 });
@@ -134,8 +135,8 @@ test("One async middleware", async t => {
   server.serve(0);
 
   let data = await makeRequestTo(t, server, "/sample");
-  t.true(data.includes("<script "));
-  t.true(data.startsWith("SAMPLE"));
+  assert.ok(data.includes("<script "));
+  assert.ok(data.startsWith("SAMPLE"));
 
   await server.close();
 });
@@ -154,8 +155,8 @@ test("Two async middleware", async t => {
   server.serve(0);
 
   let data = await makeRequestTo(t, server, "/sample");
-  t.true(data.includes("<script "));
-  t.true(data.startsWith("SAMPLE"));
+  assert.ok(data.includes("<script "));
+  assert.ok(data.startsWith("SAMPLE"));
 
   await server.close();
 });
@@ -182,8 +183,8 @@ test("Async middleware that writes", async t => {
   server.serve(0);
 
   let data = await makeRequestTo(t, server, "/sample");
-  t.true(data.includes("<script "));
-  t.true(data.startsWith("Injected"));
+  assert.ok(data.includes("<script "));
+  assert.ok(data.startsWith("Injected"));
 
   await server.close();
 });
@@ -219,8 +220,8 @@ test("Second async middleware that writes", async t => {
   server.serve(0);
 
   let data = await makeRequestTo(t, server, "/sample");
-  t.true(data.includes("<script "));
-  t.true(data.startsWith("Injected"));
+  assert.ok(data.includes("<script "));
+  assert.ok(data.startsWith("Injected"));
 
   await server.close();
 });
@@ -246,8 +247,8 @@ test("Second middleware that consumes first middleware response body, issue #29"
   server.serve(0);
 
   let data = await makeRequestTo(t, server, "/sample");
-  t.true(data.includes("<script "));
-  t.true(data.startsWith("First Second "));
+  assert.ok(data.includes("<script "));
+  assert.ok(data.startsWith("First Second "));
 
   await server.close();
 });
@@ -271,9 +272,9 @@ test("Two middlewares, end() in the first, skip the second", async t => {
   server.serve(0);
 
   let data = await makeRequestTo(t, server, "/sample");
-  t.true(data.includes("<script "));
-  t.true(data.startsWith("First "));
-  t.true(!data.startsWith("First Second "));
+  assert.ok(data.includes("<script "));
+  assert.ok(data.startsWith("First "));
+  assert.ok(!data.startsWith("First Second "));
 
   await server.close();
 });
@@ -283,8 +284,8 @@ test("Fun unicode paths", async t => {
   server.serve(0);
 
   let data = await makeRequestTo(t, server, encodeURI(`/zach’s.html`));
-  t.true(data.includes("<script "));
-  t.true(data.startsWith("This is a test"));
+  assert.ok(data.includes("<script "));
+  assert.ok(data.startsWith("This is a test"));
 
   await server.close();
 });
@@ -304,7 +305,7 @@ test("Content-Type header via middleware", async t => {
   server.serve(0);
 
   let data = await fetchHeadersForRequest(t, server, encodeURI(`/index.php`));
-  t.true(data['content-type'] === 'text/html; charset=utf-8');
+  assert.ok(data['content-type'] === 'text/html; charset=utf-8');
 
   await server.close();
 });
@@ -319,13 +320,13 @@ test("Content-Range request", async (t) => {
 
   const options = { headers: { Range: "bytes=0-48" } };
   let headers = await fetchHeadersForRequest(t, server, `/index.html`, options);
-  t.true("accept-ranges" in headers);
-  t.true(headers["accept-ranges"] === "bytes");
-  t.true("content-range" in headers);
-  t.true(headers["content-range"].startsWith("bytes 0-48/"));
+  assert.ok("accept-ranges" in headers);
+  assert.ok(headers["accept-ranges"] === "bytes");
+  assert.ok("content-range" in headers);
+  assert.ok(headers["content-range"].startsWith("bytes 0-48/"));
 
   let data = await makeRequestTo(t, server, `/index.html`, options);
-  t.is(data.length, 49);
+  assert.equal(data.length, 49);
 
   await server.close();
 });
@@ -340,8 +341,8 @@ test("Content-Range request multiple is handled as full", async (t) => {
 
   const options = { headers: { Range: "bytes=0-10,20-30" } };
   let headers = await fetchHeadersForRequest(t, server, `/index.html`, options);
-  t.true("accept-ranges" in headers);
-  t.true(headers["accept-ranges"] === "bytes");
+  assert.ok("accept-ranges" in headers);
+  assert.ok(headers["accept-ranges"] === "bytes");
 
   await server.close();
 });
@@ -356,8 +357,8 @@ test("Content-Range request invalid", async (t) => {
 
   const options = { headers: { Range: "bytes=xxx" } };
   let data = await fetchHeadersForRequest(t, server, `/index.html`, options);
-  t.true("accept-ranges" in data);
-  t.true(data["accept-ranges"] === "bytes");
+  assert.ok("accept-ranges" in data);
+  assert.ok(data["accept-ranges"] === "bytes");
 
   await server.close();
 });
@@ -370,8 +371,8 @@ test("Content-Range request invalid reversed", async (t) => {
   );
   server.serve(0);
   const options = { headers: { Range: "bytes=100-0" } };
-  await t.throwsAsync(() => fetchHeadersForRequest(t, server, `/index.html`, options), {
-    instanceOf: Error, message: 'Invalid status code 416'
+  await assert.rejects(() => fetchHeadersForRequest(t, server, `/index.html`, options), {
+    message: 'Invalid status code 416'
   })
   await server.close();
 })
@@ -385,8 +386,8 @@ test("Standard request does not include range headers", async (t) => {
   server.serve(0);
 
   let data = await fetchHeadersForRequest(t, server, `/index.html`);
-  t.false("accept-ranges" in data);
-  t.false("content-range" in data);
+  assert.equal("accept-ranges" in data, false);
+  assert.equal("content-range" in data, false);
 
   await server.close();
 });
@@ -405,8 +406,8 @@ test("Setting default response headers", async (t) => {
   server.serve(0);
 
   let data = await fetchHeadersForRequest(t, server, "/index.html");
-  t.true(data["access-control-allow-origin"] === "*");
-  t.true(data["x-foo"] === "y-bar");
+  assert.ok(data["access-control-allow-origin"] === "*");
+  assert.ok(data["x-foo"] === "y-bar");
 
   await server.close();
 });
@@ -424,7 +425,7 @@ test("Default response headers cannot overwrite content-type", async (t) => {
   server.serve(0);
 
   let data = await fetchHeadersForRequest(t, server, "/index.html");
-  t.true(data["content-type"].startsWith("text/html"));
+  assert.ok(data["content-type"].startsWith("text/html"));
 
   await server.close();
 });
@@ -443,12 +444,12 @@ test("Live reload event stream", async (t) => {
   server.serve(0);
 
   let port = await server.getPort();
-  t.true(port > 0);
+  assert.ok(port > 0);
 
   let stream = await openEventStream(`http://localhost:${port}/.ba/events`);
 
   try {
-    t.is(stream.res.headers.get("content-type"), "text/event-stream");
+    assert.equal(stream.res.headers.get("content-type"), "text/event-stream");
 
     let e1Data = await stream.next();
 
@@ -465,15 +466,15 @@ test("Live reload event stream", async (t) => {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
 
-    t.is( server.updateServer?.clients?.size, 1);
-    t.truthy(e1Data);
-    t.truthy(e2Data);
+    assert.equal( server.updateServer?.clients?.size, 1);
+    assert.ok(e1Data);
+    assert.ok(e2Data);
 
-    t.is(e1Data.type, "eleventy.status");
-    t.is(e1Data.status, "connected");
+    assert.equal(e1Data.type, "eleventy.status");
+    assert.equal(e1Data.status, "connected");
 
-    t.is(e2Data.type, "eleventy.msg");
-    t.is(e2Data.data, "TESTING");
+    assert.equal(e2Data.type, "eleventy.msg");
+    assert.equal(e2Data.data, "TESTING");
   } finally {
     stream.close();
     await server.close();
@@ -489,22 +490,22 @@ test("Live reload buildId, sent on connect and bumped by each reload", async (t)
   let stream = await openEventStream(`http://localhost:${port}/.ba/events`);
 
   let connected = await stream.next();
-  t.is(connected.status, "connected");
+  assert.equal(connected.status, "connected");
   // a client reconnecting with this id missed nothing
-  t.is(connected.buildId, server.buildId);
+  assert.equal(connected.buildId, server.buildId);
 
   let reloadedPromise = stream.next();
   server.reload({ subtype: "css", files: [] });
   let reloaded = await reloadedPromise;
 
-  t.is(reloaded.type, "eleventy.reload");
-  t.is(reloaded.buildId, server.buildId);
-  t.not(reloaded.buildId, connected.buildId);
+  assert.equal(reloaded.type, "eleventy.reload");
+  assert.equal(reloaded.buildId, server.buildId);
+  assert.notEqual(reloaded.buildId, connected.buildId);
 
   // a client connecting after the reload sees the new id
   let stream2 = await openEventStream(`http://localhost:${port}/.ba/events`);
   let reconnected = await stream2.next();
-  t.is(reconnected.buildId, reloaded.buildId);
+  assert.equal(reconnected.buildId, reloaded.buildId);
 
   stream.close();
   stream2.close();
@@ -524,8 +525,8 @@ test("Live reload uses a buildId passed to reload", async (t) => {
   server.reload({ buildId: "core-build-1", subtype: "css", files: [] });
   let reloaded = await reloadedPromise;
 
-  t.is(reloaded.buildId, "core-build-1");
-  t.is(server.buildId, "core-build-1");
+  assert.equal(reloaded.buildId, "core-build-1");
+  assert.equal(server.buildId, "core-build-1");
 
   stream.close();
   await server.close();
@@ -536,7 +537,7 @@ test("Live reload buildId is unique per server instance", async (t) => {
   let second = new DevServer("test-server", "./test/stubs/", getOptions());
 
   // a restart never matches, so clients do reload
-  t.not(first.buildId, second.buildId);
+  assert.notEqual(first.buildId, second.buildId);
 });
 
 // TODO setup websocket server *without* web server

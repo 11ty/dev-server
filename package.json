@@ -24,7 +24,7 @@
   ],
   "type": "module",
   "scripts": {
-    "test": "npx ava --verbose",
+    "test": "node --test \"test/test*.js\"",
     "build:types": "tsc -p tsconfig.build.json",
     "test:types": "tsc -p . && npm run build:types && tsc -p test/types",
     "prepublishOnly": "npm run build:types",
@@ -74,7 +74,6 @@
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
-    "ava": "^8.2.0",
     "happy-dom": "^21.0.4",
     "typescript": "^7.0.2"
   }
